@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    name: fmt · build · test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Check formatting
+        run: forge fmt --check
+
+      - name: Build
+        run: forge build --sizes
+
+      - name: Test (unit)
+        run: forge test --no-match-contract Fork -vv
+
+      - name: Test (fork — real CCTP V2 + CreateX on an Ethereum mainnet fork)
+        env:
+          # Override with a private RPC secret for reliability; defaults to a public Ethereum endpoint.
+          FORK_RPC: ${{ secrets.FORK_RPC || 'https://ethereum-rpc.publicnode.com' }}
+        run: forge test --match-contract Fork -vv
+
+      - name: Lint (production sources)
+        run: forge lint src/ script/

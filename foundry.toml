@@ -1,0 +1,27 @@
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+libs = ["lib"]
+solc = "0.8.35"
+# Pin the EVM version so the SAME bytecode deploys on every target chain. "shanghai" (PUSH0, no
+# Cancun-only opcodes like MCOPY) covers all mainstream chains; the toolchain default ("cancun")
+# would emit MCOPY and break on chains that have not adopted Cancun — and changing it later would
+# move every deterministic address, so it is pinned here before any deployment.
+evm_version = "shanghai"
+optimizer = true
+optimizer_runs = 200
+# Strip the trailing metadata hash so a contract's address depends only on its actual code, not on
+# comments / unrelated imports / remappings. Makes deterministic cross-chain addresses robust.
+bytecode_hash = "none"
+cbor_metadata = false
+
+# Trustless CREATE2 CCTP deposit-forwarder (CWIA). Dependency: OpenZeppelin Contracts v5.6.1
+# (git submodule under lib/, pinned). No forge-std — tests use plain `require` assertions.
+
+# Formatter — run `forge fmt` (CI checks `forge fmt --check`). Keep VS Code on the Foundry extension
+# (which uses forge fmt), NOT prettier-solidity, so local + CI agree.
+[fmt]
+line_length = 120
+wrap_comments = false
+number_underscore = "preserve"
