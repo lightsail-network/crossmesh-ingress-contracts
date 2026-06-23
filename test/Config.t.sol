@@ -23,7 +23,7 @@ contract ConfigTest is Base {
             _reverts(address(config), abi.encodeWithSignature("setCctpMaxFeeBps(uint256)", uint256(10_001))), "cctp cap"
         );
         require(
-            _reverts(address(config), abi.encodeWithSignature("setSweepDelay(uint256)", uint256(30 days + 1))),
+            _reverts(address(config), abi.encodeWithSignature("setSweepDelay(uint256)", uint256(7 days + 1))),
             "delay cap"
         );
     }

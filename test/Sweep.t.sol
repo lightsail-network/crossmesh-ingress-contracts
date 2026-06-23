@@ -53,7 +53,7 @@ contract SweepTest is Base {
         DepositForwarder(fwd).requestSweep();
         uint256 armed = DepositForwarder(fwd).sweepableAt();
 
-        config.setSweepDelay(30 days); // owner raises the delay AFTER arming
+        config.setSweepDelay(7 days); // owner raises the delay AFTER arming
         require(DepositForwarder(fwd).sweepableAt() == armed, "snapshot must not move when sweepDelay changes");
 
         vm.warp(armed + 1);

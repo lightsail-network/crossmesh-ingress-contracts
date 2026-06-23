@@ -25,7 +25,7 @@ contract Config is IDepositConfig {
     uint256 public constant override maxSetupFee = 100e6; // 100 USDC
     uint256 public constant override maxBaseFee = 100e6; // 100 USDC
     uint256 public constant override maxFeeBps = 10_000; // 1% (of 1e6)
-    uint256 public constant override maxSweepDelay = 30 days;
+    uint256 public constant override maxSweepDelay = 7 days;
     uint256 public constant override maxCctpFeeBps = 10_000; // 1% (of 1e6) — ceiling on the CCTP fee rate
 
     /// @notice Governance address; the only caller of {init} and the setters.
