@@ -52,7 +52,7 @@ contract ConfigTest is Base {
         c2.init(address(usdc), address(tm), FORWARDER);
         DepositForwarder impl2 = new DepositForwarder(IDepositConfig(address(c2)));
         DepositFactory f2 = new DepositFactory(address(impl2));
-        c2.setOperator(address(this));
+        c2.setOperator(address(this), true);
         c2.setFactory(address(f2));
         c2.setBaseFee(1e6); // fee > 0, feeCollector still address(0)
 

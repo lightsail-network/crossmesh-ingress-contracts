@@ -62,7 +62,7 @@ contract DeployCwia {
         factory = CreateXLib.deploy(SALT_FACTORY, factoryInit);
 
         // owner is the initial operator + fee collector; sweepDelay and fees stay 0 until the owner sets them.
-        if (Config(config).operator() != owner) Config(config).setOperator(owner);
+        if (!Config(config).isOperator(owner)) Config(config).setOperator(owner, true);
         if (Config(config).factory() != factory) Config(config).setFactory(factory);
         if (Config(config).feeCollector() == address(0)) Config(config).setFeeCollector(owner); // fees default 0
         vm.stopBroadcast();

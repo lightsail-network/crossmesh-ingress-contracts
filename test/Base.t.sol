@@ -50,7 +50,7 @@ abstract contract Base {
         config.init(address(usdc), address(tm), FORWARDER);
         impl = new DepositForwarder(IDepositConfig(address(config)));
         factory = new DepositFactory(address(impl));
-        config.setOperator(address(this)); // this test acts as the operator
+        config.setOperator(address(this), true); // this test acts as the operator
         config.setFactory(address(factory));
         config.setFeeCollector(FEE);
         config.setRescueSink(SINK);

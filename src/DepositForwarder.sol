@@ -86,7 +86,7 @@ contract DepositForwarder {
     ///      fully drained, but a partial flush that leaves both keeps it — so flush can't reset a depositor's
     ///      self-rescue clock. Reconcile off-chain from the {Settled} event.
     function flush() external {
-        require(msg.sender == config.operator() || msg.sender == config.factory(), "not operator");
+        require(config.isOperator(msg.sender) || msg.sender == config.factory(), "not operator");
         IERC20 usdc = IERC20(config.usdc());
         uint256 balance = usdc.balanceOf(address(this));
         uint256 limit = _burnLimit();
@@ -148,7 +148,7 @@ contract DepositForwarder {
     ///      code can block — so the remedy is to sweep it out, not to "reject" it. The sink is fixed in
     ///      Config, so a compromised operator key cannot redirect it. Never touches USDC.
     function rescueNative() external {
-        require(msg.sender == config.operator(), "not operator");
+        require(config.isOperator(msg.sender), "not operator");
         address sink = config.rescueSink();
         require(sink != address(0), "sink unset");
         uint256 amount = address(this).balance;
@@ -162,7 +162,7 @@ contract DepositForwarder {
     ///      non-standard tokens (e.g. USDT, whose `transfer` returns no bool) are still recoverable.
     /// @param token The token to rescue (must not be USDC).
     function rescueERC20(address token) external {
-        require(msg.sender == config.operator(), "not operator");
+        require(config.isOperator(msg.sender), "not operator");
         require(token != config.usdc(), "USDC only via flush/sweep");
         address sink = config.rescueSink();
         require(sink != address(0), "sink unset");

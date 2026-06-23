@@ -98,6 +98,28 @@ contract FlushTest is Base {
         require(_reverts(fwd, abi.encodeWithSignature("flush()")), "non-operator flush must revert");
     }
 
+    /// A second allow-listed operator can also flush — the operator fleet scales without a redeploy.
+    function test_second_operator_can_flush() public {
+        address op2 = address(0xB0B);
+        config.setOperator(op2, true);
+        address fwd = factory.deploy(_r(), 1);
+        usdc.mint(fwd, 100e6);
+        vm.prank(op2);
+        (bool ok,) = fwd.call(abi.encodeWithSignature("flush()"));
+        require(ok, "allow-listed operator flush must succeed");
+    }
+
+    /// Revoking an operator stops it flushing.
+    function test_revoked_operator_flush_reverts() public {
+        address op2 = address(0xB0B);
+        config.setOperator(op2, true);
+        config.setOperator(op2, false);
+        address fwd = factory.deploy(_r(), 1);
+        usdc.mint(fwd, 100e6);
+        vm.prank(op2);
+        require(_reverts(fwd, abi.encodeWithSignature("flush()")), "revoked operator flush must revert");
+    }
+
     /// A full flush (operator showed up) cancels a pending self-rescue countdown.
     function test_flush_clears_pending_sweep() public {
         address fwd = factory.deploy(_r(), 1);

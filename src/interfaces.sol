@@ -83,8 +83,8 @@ interface IDepositConfig {
     function feeCollector() external view returns (address);
     /// @notice Operator-priority window: how long after `requestSweep()` before anyone may `sweep()`.
     function sweepDelay() external view returns (uint256);
-    /// @notice Operator (hot key) permitted to flush and collect fees.
-    function operator() external view returns (address);
+    /// @notice Whether `account` is an allow-listed operator (hot key permitted to flush and collect fees).
+    function isOperator(address account) external view returns (bool);
     /// @notice Factory trusted to relay the operator's one-tx deploy+flush.
     function factory() external view returns (address);
     /// @notice Destination for rescued stray native coin / non-USDC tokens.

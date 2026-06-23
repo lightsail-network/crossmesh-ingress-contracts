@@ -40,7 +40,7 @@ contract Config is IDepositConfig {
     uint256 public override cctpMaxFeeBps; // CCTP fee rate (millionths of the burn); 0 = free standard
     address public override feeCollector;
     uint256 public override sweepDelay;
-    address public override operator;
+    mapping(address => bool) public override isOperator;
     address public override factory;
     address public override rescueSink;
 
@@ -66,8 +66,8 @@ contract Config is IDepositConfig {
     event FeeCollectorSet(address indexed feeCollector);
     /// @notice Emitted when the sweep delay is set.
     event SweepDelaySet(uint256 sweepDelay);
-    /// @notice Emitted when the operator is set.
-    event OperatorSet(address indexed operator);
+    /// @notice Emitted when an operator key is allowed or disallowed.
+    event OperatorSet(address indexed operator, bool allowed);
     /// @notice Emitted when the factory is set.
     event FactorySet(address indexed factory);
     /// @notice Emitted when the rescue sink is set.
@@ -148,11 +148,14 @@ contract Config is IDepositConfig {
         emit SweepDelaySet(value);
     }
 
-    /// @notice Set the operator (the hot key permitted to flush and collect fees).
-    /// @param value New operator.
-    function setOperator(address value) external onlyOwner {
-        operator = value;
-        emit OperatorSet(value);
+    /// @notice Allow or disallow an operator (a hot key permitted to flush and collect fees). An
+    ///         allow-list (not a single key) so the operator fleet can scale out — add keys for more
+    ///         parallel throughput / failover — without a redeploy. Fees still go to `feeCollector`.
+    /// @param value Operator key to allow or disallow.
+    /// @param allowed True to permit, false to revoke.
+    function setOperator(address value, bool allowed) external onlyOwner {
+        isOperator[value] = allowed;
+        emit OperatorSet(value, allowed);
     }
 
     /// @notice Set the factory trusted to relay the operator's one-tx deploy+flush.

@@ -35,7 +35,7 @@ contract CwiaForkTest {
         cfg.init(USDC, TOKEN_MESSENGER, FORWARDER);
         DepositForwarder impl = new DepositForwarder(IDepositConfig(address(cfg)));
         DepositFactory factory = new DepositFactory(address(impl));
-        cfg.setOperator(address(this)); // this test acts as the operator
+        cfg.setOperator(address(this), true); // this test acts as the operator
         cfg.setFactory(address(factory));
 
         bytes memory recipient = bytes("GA7PTNNXUYQYGFKETYSIVDWFYCD5GTINV44ES63LBL3LQWLD6B36KYTE");

@@ -74,7 +74,7 @@ contract DepositFactory {
     /// @return forwarder The clone address.
     function deployAndFlush(bytes calldata recipient, uint256 index) external returns (address forwarder) {
         forwarder = deploy(recipient, index);
-        require(msg.sender == DepositForwarder(forwarder).config().operator(), "not operator");
+        require(DepositForwarder(forwarder).config().isOperator(msg.sender), "not operator");
         DepositForwarder(forwarder).flush();
     }
 }
