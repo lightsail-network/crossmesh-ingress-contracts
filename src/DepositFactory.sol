@@ -18,7 +18,8 @@ contract DepositFactory {
     /// @param forwarder The deployed clone address.
     /// @param recipient The committed Stellar recipient (strkey UTF-8 bytes).
     /// @param index The per-recipient index.
-    event Deployed(address indexed forwarder, bytes recipient, uint256 index);
+    /// @param fast Whether this address settles via a CCTP fast transfer (committed in the clone's args).
+    event Deployed(address indexed forwarder, bytes recipient, uint256 index, bool fast);
 
     /// @param _implementation The shared DepositForwarder implementation.
     constructor(address _implementation) {
@@ -28,42 +29,53 @@ contract DepositFactory {
         implementation = _implementation;
     }
 
-    /// @dev The clone salt for `(recipient, index)`.
+    /// @dev The clone's immutable args: the recipient followed by a 1-byte fast flag (1 = CCTP fast
+    ///      transfer, 0 = standard). The flag is read back by the forwarder at settlement.
+    function _args(bytes memory recipient, bool fast) internal pure returns (bytes memory) {
+        return abi.encodePacked(recipient, fast ? uint8(1) : uint8(0));
+    }
+
+    /// @dev The clone salt for `(recipient, index)`. `fast` is committed via the args (so a fast and a
+    ///      standard address for the same `(recipient, index)` are distinct), not via the salt.
     function _salt(bytes memory recipient, uint256 index) internal pure returns (bytes32) {
         return keccak256(abi.encode(recipient, index));
     }
 
-    /// @notice Counterfactual deposit address for `(recipient, index)` — re-derivable off-chain.
+    /// @notice Counterfactual deposit address for `(recipient, index, fast)` — re-derivable off-chain.
     /// @param recipient The Stellar recipient (strkey UTF-8 bytes).
     /// @param index The per-recipient index.
+    /// @param fast True for a CCTP fast-transfer address, false for standard.
     /// @return The deterministic clone address (whether or not it is deployed).
-    function computeAddress(bytes memory recipient, uint256 index) public view returns (address) {
+    function computeAddress(bytes memory recipient, uint256 index, bool fast) public view returns (address) {
         return Clones.predictDeterministicAddressWithImmutableArgs(
-            implementation, recipient, _salt(recipient, index), address(this)
+            implementation, _args(recipient, fast), _salt(recipient, index), address(this)
         );
     }
 
-    /// @notice Whether the forwarder for `(recipient, index)` has been deployed.
+    /// @notice Whether the forwarder for `(recipient, index, fast)` has been deployed.
     /// @param recipient The Stellar recipient (strkey UTF-8 bytes).
     /// @param index The per-recipient index.
+    /// @param fast True for the fast-transfer address, false for standard.
     /// @return True if code exists at the computed address.
-    function isDeployed(bytes memory recipient, uint256 index) external view returns (bool) {
-        return computeAddress(recipient, index).code.length > 0;
+    function isDeployed(bytes memory recipient, uint256 index, bool fast) external view returns (bool) {
+        return computeAddress(recipient, index, fast).code.length > 0;
     }
 
-    /// @notice Deploy the forwarder clone for `(recipient, index)` if not already deployed. Permissionless.
+    /// @notice Deploy the forwarder clone for `(recipient, index, fast)` if not already deployed. Permissionless.
     /// @dev The recipient is committed AS-IS — no on-chain validation. The integrator's SDK validates the
     ///      full Stellar strkey (base32 + checksum) before an address is handed out; `computeAddress` and
     ///      `deploy` accept identical bytes, so any address that can be computed can also be deployed.
     /// @param recipient The Stellar recipient (strkey UTF-8 bytes), baked in as the clone's immutable arg.
     /// @param index The per-recipient index.
+    /// @param fast True for a CCTP fast-transfer address, false for standard.
     /// @return forwarder The clone address.
-    function deploy(bytes calldata recipient, uint256 index) public returns (address forwarder) {
+    function deploy(bytes calldata recipient, uint256 index, bool fast) public returns (address forwarder) {
+        bytes memory args = _args(recipient, fast);
         bytes32 salt = _salt(recipient, index);
-        forwarder = Clones.predictDeterministicAddressWithImmutableArgs(implementation, recipient, salt, address(this));
+        forwarder = Clones.predictDeterministicAddressWithImmutableArgs(implementation, args, salt, address(this));
         if (forwarder.code.length == 0) {
-            Clones.cloneDeterministicWithImmutableArgs(implementation, recipient, salt);
-            emit Deployed(forwarder, recipient, index);
+            Clones.cloneDeterministicWithImmutableArgs(implementation, args, salt);
+            emit Deployed(forwarder, recipient, index, fast);
         }
     }
 
@@ -71,9 +83,10 @@ contract DepositFactory {
     /// @dev Self-rescue does not use this path; it goes through `deploy` + `requestSweep` + `sweep` directly.
     /// @param recipient The Stellar recipient (strkey UTF-8 bytes).
     /// @param index The per-recipient index.
+    /// @param fast True for a CCTP fast-transfer address, false for standard.
     /// @return forwarder The clone address.
-    function deployAndFlush(bytes calldata recipient, uint256 index) external returns (address forwarder) {
-        forwarder = deploy(recipient, index);
+    function deployAndFlush(bytes calldata recipient, uint256 index, bool fast) external returns (address forwarder) {
+        forwarder = deploy(recipient, index, fast);
         require(DepositForwarder(forwarder).config().isOperator(msg.sender), "not operator");
         DepositForwarder(forwarder).flush();
     }

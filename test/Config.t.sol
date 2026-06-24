@@ -20,7 +20,12 @@ contract ConfigTest is Base {
         );
         require(_reverts(address(config), abi.encodeWithSignature("setFeeBps(uint256)", uint256(10_001))), "bps cap");
         require(
-            _reverts(address(config), abi.encodeWithSignature("setCctpMaxFeeBps(uint256)", uint256(10_001))), "cctp cap"
+            _reverts(address(config), abi.encodeWithSignature("setCctpStandardMaxFeeBps(uint256)", uint256(10_001))),
+            "cctp standard cap"
+        );
+        require(
+            _reverts(address(config), abi.encodeWithSignature("setCctpFastMaxFeeBps(uint256)", uint256(10_001))),
+            "cctp fast cap"
         );
         require(
             _reverts(address(config), abi.encodeWithSignature("setSweepDelay(uint256)", uint256(7 days + 1))),
@@ -56,9 +61,11 @@ contract ConfigTest is Base {
         c2.setFactory(address(f2));
         c2.setBaseFee(1e6); // fee > 0, feeCollector still address(0)
 
-        usdc.mint(f2.computeAddress(_r(), 1), 100e6);
+        usdc.mint(f2.computeAddress(_r(), 1, false), 100e6);
         require(
-            _reverts(address(f2), abi.encodeWithSignature("deployAndFlush(bytes,uint256)", _r(), uint256(1))),
+            _reverts(
+                address(f2), abi.encodeWithSignature("deployAndFlush(bytes,uint256,bool)", _r(), uint256(1), false)
+            ),
             "flush with fee > 0 and a zero feeCollector must revert (not burn the fee)"
         );
     }

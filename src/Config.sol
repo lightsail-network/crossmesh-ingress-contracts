@@ -37,7 +37,8 @@ contract Config is IDepositConfig {
     uint256 public override setupFee;
     uint256 public override baseFee;
     uint256 public override feeBps;
-    uint256 public override cctpMaxFeeBps; // CCTP fee rate (millionths of the burn); 0 = free standard
+    uint256 public override cctpStandardMaxFeeBps; // standard-burn CCTP fee allowance (millionths); 0 today
+    uint256 public override cctpFastMaxFeeBps; // fast-burn CCTP fee allowance (millionths); covers the chain's fast fee
     address public override feeCollector;
     uint256 public override sweepDelay;
     mapping(address => bool) public override isOperator;
@@ -60,8 +61,10 @@ contract Config is IDepositConfig {
     event BaseFeeSet(uint256 baseFee);
     /// @notice Emitted when the proportional fee (millionths of 1e6) is set.
     event FeeBpsSet(uint256 feeBps);
-    /// @notice Emitted when the CCTP fee-rate cap is set.
-    event CctpMaxFeeBpsSet(uint256 cctpMaxFeeBps);
+    /// @notice Emitted when the standard-burn CCTP fee allowance is set.
+    event CctpStandardMaxFeeBpsSet(uint256 cctpStandardMaxFeeBps);
+    /// @notice Emitted when the fast-burn CCTP fee allowance is set.
+    event CctpFastMaxFeeBpsSet(uint256 cctpFastMaxFeeBps);
     /// @notice Emitted when the fee collector is set.
     event FeeCollectorSet(address indexed feeCollector);
     /// @notice Emitted when the sweep delay is set.
@@ -124,12 +127,25 @@ contract Config is IDepositConfig {
         emit FeeBpsSet(value);
     }
 
-    /// @notice Set the CCTP fee-rate cap applied per burn (millionths of the burned amount).
-    /// @param value New CCTP fee rate; must be `<= maxCctpFeeBps`.
-    function setCctpMaxFeeBps(uint256 value) external onlyOwner {
+    /// @notice Set the CCTP fee allowance for STANDARD burns (millionths of the burned amount). Standard
+    ///         transfers are free today, so 0 is fine; a small non-zero buffer keeps flushes alive if Circle
+    ///         ever introduces a standard fee (otherwise the burn's maxFee is too low and the burn reverts).
+    /// @param value New allowance; must be `<= maxCctpFeeBps`.
+    function setCctpStandardMaxFeeBps(uint256 value) external onlyOwner {
         require(value <= maxCctpFeeBps, "above cap");
-        cctpMaxFeeBps = value;
-        emit CctpMaxFeeBpsSet(value);
+        cctpStandardMaxFeeBps = value;
+        emit CctpStandardMaxFeeBpsSet(value);
+    }
+
+    /// @notice Set the CCTP fee allowance for FAST burns (millionths of the burned amount). Must cover the
+    ///         source chain's current fast-transfer fee, or the fast burn reverts for too low a maxFee. The
+    ///         unit is MILLIONTHS, not basis points — Circle quotes the fee in bps, so multiply by 100
+    ///         (e.g. Circle's 14 bps → 1400). Fees: https://developers.circle.com/cctp/concepts/fees
+    /// @param value New allowance; must be `<= maxCctpFeeBps`.
+    function setCctpFastMaxFeeBps(uint256 value) external onlyOwner {
+        require(value <= maxCctpFeeBps, "above cap");
+        cctpFastMaxFeeBps = value;
+        emit CctpFastMaxFeeBpsSet(value);
     }
 
     /// @notice Set the destination for collected fees.
@@ -174,7 +190,7 @@ contract Config is IDepositConfig {
 
     /// @notice Begin a two-step ownership transfer; `to` must call {acceptOwnership} for it to take effect.
     /// @dev Two-step (propose + accept) so a mistyped address cannot brick governance — which would also
-    ///      strand `cctpMaxFeeBps` if Circle later enabled a CCTP fee, halting every flush/sweep. Pass
+    ///      strand the CCTP fee allowances if Circle changed a fee, halting every flush/sweep. Pass
     ///      `address(0)` to cancel a pending transfer.
     /// @param to Proposed new owner (or `address(0)` to cancel).
     function transferOwnership(address to) external onlyOwner {

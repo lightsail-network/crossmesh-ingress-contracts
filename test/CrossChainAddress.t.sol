@@ -70,7 +70,7 @@ contract CrossChainAddressTest {
         require(dep.deploy(SALT_IMPL, implInit) == impl, "impl off-prediction");
         require(dep.deploy(SALT_FACTORY, facInit) == fac, "factory off-prediction");
 
-        address deposit = DepositFactory(fac).computeAddress(recipient, index);
+        address deposit = DepositFactory(fac).computeAddress(recipient, index, false);
 
         // Other chains: recompute under different chainids — same inputs => same addresses.
         uint256[3] memory chains = [uint256(137), uint256(8453), uint256(42161)]; // Polygon, Base, Arbitrum
@@ -79,7 +79,9 @@ contract CrossChainAddressTest {
             require(_create2(SALT_CONFIG, cfgInit) == cfg, "config differs across chains");
             require(_create2(SALT_IMPL, implInit) == impl, "impl differs across chains");
             require(_create2(SALT_FACTORY, facInit) == fac, "factory differs across chains");
-            require(DepositFactory(fac).computeAddress(recipient, index) == deposit, "deposit differs across chains");
+            require(
+                DepositFactory(fac).computeAddress(recipient, index, false) == deposit, "deposit differs across chains"
+            );
         }
     }
 

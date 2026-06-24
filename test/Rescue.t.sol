@@ -11,7 +11,7 @@ import {MockNoReturnToken} from "./mocks/MockNoReturnToken.sol";
 contract RescueTest is Base {
     /// Stray native coin is recoverable to the sink.
     function test_rescue_native() public {
-        address fwd = factory.deploy(_r(), 9);
+        address fwd = factory.deploy(_r(), 9, false);
         vm.deal(fwd, 1 ether);
         DepositForwarder(fwd).rescueNative();
         require(fwd.balance == 0 && SINK.balance == 1 ether, "native not recovered to sink");
@@ -19,16 +19,16 @@ contract RescueTest is Base {
 
     /// The case `receive()` can't catch: native sent BEFORE deployment is still recoverable after deploy.
     function test_rescue_native_predeployment() public {
-        address addr = factory.computeAddress(_r(), 10);
+        address addr = factory.computeAddress(_r(), 10, false);
         vm.deal(addr, 0.5 ether); // arrives while there's no code there
-        factory.deploy(_r(), 10); // deploy preserves the existing balance
+        factory.deploy(_r(), 10, false); // deploy preserves the existing balance
         DepositForwarder(addr).rescueNative();
         require(addr.balance == 0 && SINK.balance == 0.5 ether, "pre-deploy native not recovered");
     }
 
     /// USDC can NEVER be rescued (recipient-bound); other mis-sent tokens can.
     function test_rescue_erc20_excludes_usdc() public {
-        address fwd = factory.deploy(_r(), 11);
+        address fwd = factory.deploy(_r(), 11, false);
         usdc.mint(fwd, 100e6);
         require(
             _reverts(fwd, abi.encodeWithSignature("rescueERC20(address)", address(usdc))), "USDC rescue must revert"
@@ -44,7 +44,7 @@ contract RescueTest is Base {
     /// SafeERC20: a USDT-style token (`transfer` returns NOTHING) is still rescuable — a raw IERC20.transfer
     /// would revert on the missing return, stranding it.
     function test_rescue_erc20_nonstandard_token() public {
-        address fwd = factory.deploy(_r(), 13);
+        address fwd = factory.deploy(_r(), 13, false);
         MockNoReturnToken usdt = new MockNoReturnToken();
         usdt.mint(fwd, 5e6);
         DepositForwarder(fwd).rescueERC20(address(usdt));
@@ -53,7 +53,7 @@ contract RescueTest is Base {
 
     /// Only the operator can rescue.
     function test_rescue_unauthorized() public {
-        address fwd = factory.deploy(_r(), 12);
+        address fwd = factory.deploy(_r(), 12, false);
         vm.deal(fwd, 1 ether);
         vm.prank(NON_OP);
         require(_reverts(fwd, abi.encodeWithSignature("rescueNative()")), "unauthorized rescue must revert");

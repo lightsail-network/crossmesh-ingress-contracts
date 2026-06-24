@@ -9,7 +9,7 @@ import {DepositForwarder} from "../src/DepositForwarder.sol";
 contract SweepTest is Base {
     /// Self-rescue: arm → blocked before the window → after the window anyone sweeps, FEE-FREE, to recipient.
     function test_self_rescue_via_sweep() public {
-        address fwd = factory.deploy(_r(), 3);
+        address fwd = factory.deploy(_r(), 3, false);
         usdc.mint(fwd, 100e6);
 
         vm.prank(NON_OP);
@@ -27,16 +27,35 @@ contract SweepTest is Base {
         require(usdc.balanceOf(fwd) == 0, "swept");
     }
 
+    /// A FAST address's escape hatch ALWAYS settles via standard finality, so self-rescue can't be bricked
+    /// by an unset/insufficient fast fee allowance, an unsupported chain, or a Circle fast-fee spike. The
+    /// operator's flush on the same address still uses the committed FAST mode.
+    function test_fast_address_sweep_uses_standard_finality() public {
+        address fwd = factory.deploy(_r(), 3, true); // a FAST address
+        config.setCctpFastMaxFeeBps(1400);
+
+        usdc.mint(fwd, 50e6);
+        DepositForwarder(fwd).flush(); // operator path → committed fast mode
+        require(tm.lastFinality() == 1000, "flush on a fast address uses fast finality");
+
+        usdc.mint(fwd, 50e6);
+        DepositForwarder(fwd).requestSweep();
+        vm.warp(block.timestamp + DELAY + 1);
+        DepositForwarder(fwd).sweep(); // escape hatch → forced standard
+        require(tm.lastFinality() == 2000, "sweep on a fast address forces standard finality");
+        require(tm.lastMaxFee() == 0, "sweep uses the standard fee allowance (0), not the fast one");
+    }
+
     /// requestSweep cannot pre-arm an empty address (would otherwise let someone bypass the window for a
     /// future deposit).
     function test_request_sweep_requires_balance() public {
-        address fwd = factory.deploy(_r(), 1); // no balance
+        address fwd = factory.deploy(_r(), 1, false); // no balance
         require(_reverts(fwd, abi.encodeWithSignature("requestSweep()")), "requestSweep on empty must revert");
     }
 
     /// requestSweep is idempotent while armed — re-calling does not move the window.
     function test_request_sweep_idempotent() public {
-        address fwd = factory.deploy(_r(), 1);
+        address fwd = factory.deploy(_r(), 1, false);
         usdc.mint(fwd, 100e6);
         DepositForwarder(fwd).requestSweep();
         uint256 first = DepositForwarder(fwd).sweepableAt();
@@ -48,7 +67,7 @@ contract SweepTest is Base {
     /// SECURITY: `sweepableAt` is snapshotted at arm time, so a later `sweepDelay` increase can NOT
     /// retroactively push out a depositor's self-rescue.
     function test_sweep_delay_snapshot_not_extendable() public {
-        address fwd = factory.deploy(_r(), 1);
+        address fwd = factory.deploy(_r(), 1, false);
         usdc.mint(fwd, 100e6);
         DepositForwarder(fwd).requestSweep();
         uint256 armed = DepositForwarder(fwd).sweepableAt();
@@ -65,7 +84,7 @@ contract SweepTest is Base {
     /// with NO fresh cooldown (a capped sweep keeps the window open).
     function test_sweep_caps_at_burn_limit() public {
         minter.setBurnLimit(address(usdc), 50e6);
-        address fwd = factory.deploy(_r(), 7);
+        address fwd = factory.deploy(_r(), 7, false);
         usdc.mint(fwd, 120e6); // > cap
 
         DepositForwarder(fwd).requestSweep();
@@ -86,7 +105,7 @@ contract SweepTest is Base {
     /// drain clears it.
     function test_partial_flush_keeps_escape_window() public {
         minter.setBurnLimit(address(usdc), 50e6);
-        address fwd = factory.deploy(_r(), 14);
+        address fwd = factory.deploy(_r(), 14, false);
         usdc.mint(fwd, 120e6); // > cap
 
         DepositForwarder(fwd).requestSweep();
@@ -104,7 +123,7 @@ contract SweepTest is Base {
     /// A dust pre-arm cannot drain a LATER deposit — `requestSweep` snapshots the balance, so an old
     /// window only ever sweeps what was present when it was armed.
     function test_dust_prearm_cannot_sweep_future_deposit() public {
-        address fwd = factory.deploy(_r(), 21);
+        address fwd = factory.deploy(_r(), 21, false);
         usdc.mint(fwd, 1); // 1 unit of dust
         DepositForwarder(fwd).requestSweep(); // armed with sweepCap = 1
         vm.warp(block.timestamp + DELAY + 1);

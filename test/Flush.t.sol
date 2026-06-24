@@ -9,10 +9,10 @@ import {DepositForwarder} from "../src/DepositForwarder.sol";
 contract FlushTest is Base {
     /// First settlement collects setup + base + amount×bps; burn(amount − fee) → recipient.
     function test_flush_collects_all_three_fees() public {
-        address addr = factory.computeAddress(_r(), 1);
+        address addr = factory.computeAddress(_r(), 1, false);
         usdc.mint(addr, 100e6);
 
-        factory.deployAndFlush(_r(), 1); // operator
+        factory.deployAndFlush(_r(), 1, false); // operator
 
         uint256 fee = SETUP + BASE + _pct(100e6);
         require(usdc.balanceOf(FEE) == fee, "feeCollector");
@@ -23,9 +23,9 @@ contract FlushTest is Base {
 
     /// Setup fee is charged once: the second settlement has only base + pct.
     function test_setup_fee_only_once() public {
-        address addr = factory.computeAddress(_r(), 1);
+        address addr = factory.computeAddress(_r(), 1, false);
         usdc.mint(addr, 100e6);
-        factory.deployAndFlush(_r(), 1);
+        factory.deployAndFlush(_r(), 1, false);
         uint256 afterFirst = usdc.balanceOf(FEE);
 
         usdc.mint(addr, 50e6);
@@ -37,10 +37,10 @@ contract FlushTest is Base {
     /// flush() settles the WHOLE balance (no caller-chosen amount): two accumulated deposits are settled in
     /// ONE flush → one base fee, and there is no `amount` to split for fee abuse.
     function test_flush_settles_full_balance() public {
-        address addr = factory.computeAddress(_r(), 1);
+        address addr = factory.computeAddress(_r(), 1, false);
         usdc.mint(addr, 30e6);
         usdc.mint(addr, 20e6); // two deposits → balance 50
-        factory.deployAndFlush(_r(), 1);
+        factory.deployAndFlush(_r(), 1, false);
 
         uint256 fee = SETUP + BASE + _pct(50e6); // ONE base fee for the whole balance
         require(usdc.balanceOf(FEE) == fee, "one settlement, one base fee");
@@ -51,9 +51,9 @@ contract FlushTest is Base {
     /// flush() caps at the per-message burn limit; a balance above it drains over successive flushes.
     function test_flush_caps_at_burn_limit() public {
         minter.setBurnLimit(address(usdc), 50e6);
-        address addr = factory.computeAddress(_r(), 5);
+        address addr = factory.computeAddress(_r(), 5, false);
         usdc.mint(addr, 120e6); // > cap
-        factory.deployAndFlush(_r(), 5); // settles only the 50 cap
+        factory.deployAndFlush(_r(), 5, false); // settles only the 50 cap
         require(usdc.balanceOf(addr) == 70e6, "flush capped at the burn limit");
 
         DepositForwarder(addr).flush(); // another 50
@@ -63,36 +63,60 @@ contract FlushTest is Base {
     /// A 0 burn limit means CCTP marks the token UNSUPPORTED — settlement reverts clearly, not silently.
     function test_settle_reverts_if_burn_unsupported() public {
         minter.setBurnLimit(address(usdc), 0);
-        usdc.mint(factory.computeAddress(_r(), 6), 100e6);
+        usdc.mint(factory.computeAddress(_r(), 6, false), 100e6);
         require(
-            _reverts(address(factory), abi.encodeWithSignature("deployAndFlush(bytes,uint256)", _r(), uint256(6))),
+            _reverts(
+                address(factory), abi.encodeWithSignature("deployAndFlush(bytes,uint256,bool)", _r(), uint256(6), false)
+            ),
             "flush must revert when the burn limit is 0 (unsupported)"
         );
     }
 
     /// A deposit smaller than the total fee can't be settled (`fee < settled` required).
     function test_min_deposit_revert() public {
-        usdc.mint(factory.computeAddress(_r(), 4), 5e6); // < SETUP(10) + BASE
+        usdc.mint(factory.computeAddress(_r(), 4, false), 5e6); // < SETUP(10) + BASE
         require(
-            _reverts(address(factory), abi.encodeWithSignature("deployAndFlush(bytes,uint256)", _r(), uint256(4))),
+            _reverts(
+                address(factory), abi.encodeWithSignature("deployAndFlush(bytes,uint256,bool)", _r(), uint256(4), false)
+            ),
             "fee exceeds settled must revert"
         );
     }
 
-    /// The CCTP fee RATE is configurable (default 0 = free standard); the on-chain maxFee scales with the
-    /// burned amount: maxFee = toBurn × rate / 1e6.
-    function test_cctp_max_fee_configurable() public {
-        config.setCctpMaxFeeBps(1000); // 0.1% of the burned amount
-        usdc.mint(factory.computeAddress(_r(), 8), 100e6);
-        factory.deployAndFlush(_r(), 8);
+    /// A STANDARD address (fast=false) settles at finality 2000 and pays the standard CCTP allowance
+    /// (0 by default -> maxFee 0).
+    function test_standard_address_uses_standard_finality() public {
+        usdc.mint(factory.computeAddress(_r(), 8, false), 100e6);
+        factory.deployAndFlush(_r(), 8, false);
+        require(tm.lastFinality() == 2000, "standard address -> finality 2000");
+        require(tm.lastMaxFee() == 0, "standard allowance defaults to 0");
+    }
 
+    /// A FAST address (fast=true) settles at finality 1000, and its maxFee scales with the FAST allowance:
+    /// maxFee = toBurn x cctpFastMaxFeeBps / 1e6 (independent of the standard allowance).
+    function test_fast_address_uses_fast_finality_and_fee() public {
+        config.setCctpFastMaxFeeBps(1400); // 0.14% — Circle's 14 bps x 100 (millionths)
+        usdc.mint(factory.computeAddress(_r(), 8, true), 100e6);
+        factory.deployAndFlush(_r(), 8, true);
+        require(tm.lastFinality() == 1000, "fast address -> finality 1000");
         uint256 toBurn = 100e6 - (SETUP + BASE + _pct(100e6));
-        require(tm.lastMaxFee() == toBurn * 1000 / 1e6, "cctp maxFee must scale: toBurn x rate / 1e6");
+        require(tm.lastMaxFee() == toBurn * 1400 / 1e6, "fast maxFee = toBurn x fastBps / 1e6");
+    }
+
+    /// The same (recipient, index) yields DIFFERENT addresses for fast vs standard — one recipient can offer
+    /// both a fast and a standard deposit address, each with its mode committed in the clone's args.
+    function test_fast_and_standard_addresses_differ() public {
+        address std = factory.deploy(_r(), 8, false);
+        address fst = factory.deploy(_r(), 8, true);
+        require(std != fst, "fast and standard addresses must differ");
+        require(keccak256(DepositForwarder(std).recipient()) == keccak256(_r()), "std recipient intact");
+        require(keccak256(DepositForwarder(fst).recipient()) == keccak256(_r()), "fast recipient intact");
+        require(!DepositForwarder(std).fast() && DepositForwarder(fst).fast(), "fast flag committed per address");
     }
 
     /// flush is operator/factory-only.
     function test_non_operator_flush_reverts() public {
-        address fwd = factory.deploy(_r(), 1);
+        address fwd = factory.deploy(_r(), 1, false);
         usdc.mint(fwd, 100e6);
         vm.prank(NON_OP);
         require(_reverts(fwd, abi.encodeWithSignature("flush()")), "non-operator flush must revert");
@@ -102,7 +126,7 @@ contract FlushTest is Base {
     function test_second_operator_can_flush() public {
         address op2 = address(0xB0B);
         config.setOperator(op2, true);
-        address fwd = factory.deploy(_r(), 1);
+        address fwd = factory.deploy(_r(), 1, false);
         usdc.mint(fwd, 100e6);
         vm.prank(op2);
         (bool ok,) = fwd.call(abi.encodeWithSignature("flush()"));
@@ -114,7 +138,7 @@ contract FlushTest is Base {
         address op2 = address(0xB0B);
         config.setOperator(op2, true);
         config.setOperator(op2, false);
-        address fwd = factory.deploy(_r(), 1);
+        address fwd = factory.deploy(_r(), 1, false);
         usdc.mint(fwd, 100e6);
         vm.prank(op2);
         require(_reverts(fwd, abi.encodeWithSignature("flush()")), "revoked operator flush must revert");
@@ -122,7 +146,7 @@ contract FlushTest is Base {
 
     /// A full flush (operator showed up) cancels a pending self-rescue countdown.
     function test_flush_clears_pending_sweep() public {
-        address fwd = factory.deploy(_r(), 1);
+        address fwd = factory.deploy(_r(), 1, false);
         usdc.mint(fwd, 100e6);
         DepositForwarder(fwd).requestSweep();
         require(DepositForwarder(fwd).sweepableAt() != 0, "armed");

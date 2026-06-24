@@ -23,8 +23,11 @@ contract DepositForwarder {
 
     /// @dev CCTP destination domain for Stellar.
     uint32 internal constant STELLAR_DOMAIN = 27;
-    /// @dev CCTP standard finality threshold (no fast-transfer fee).
+    /// @dev CCTP finality thresholds (protocol constants): 2000 = standard (finalized, free), 1000 = fast
+    ///      (confirmed, charges a fast fee). Circle buckets any value ≤1000 to fast and >1000 to standard.
+    ///      Ref: https://developers.circle.com/cctp/concepts/finality-and-block-confirmations
     uint32 internal constant FINALITY_STANDARD = 2000;
+    uint32 internal constant FINALITY_FAST = 1000;
     /// @dev Denominator for the proportional fee (`feeBps` is in millionths).
     uint256 internal constant BPS_DENOM = 1e6;
 
@@ -74,7 +77,38 @@ contract DepositForwarder {
     /// @notice This clone's committed Stellar recipient, read from its immutable args.
     /// @return The recipient as strkey UTF-8 bytes.
     function recipient() public view returns (bytes memory) {
-        return Clones.fetchCloneArgs(address(this));
+        return _recipient();
+    }
+
+    /// @notice Whether this address settles via a CCTP fast transfer (committed in the clone's args).
+    /// @return True for fast (finality 1000 + fast fee), false for standard (finality 2000, free).
+    function fast() external view returns (bool) {
+        return _fast();
+    }
+
+    /// @dev The clone's immutable args are `recipient ++ uint8(fast)`. The recipient is every byte but the
+    ///      trailing flag; shorten the fetched buffer by one instead of copying.
+    function _recipient() internal view returns (bytes memory r) {
+        r = Clones.fetchCloneArgs(address(this));
+        assembly ("memory-safe") {
+            mstore(r, sub(mload(r), 1))
+        }
+    }
+
+    /// @dev The trailing immutable-arg byte: non-zero = fast transfer, zero = standard.
+    function _fast() internal view returns (bool) {
+        bytes memory args = Clones.fetchCloneArgs(address(this));
+        return uint8(args[args.length - 1]) != 0;
+    }
+
+    /// @dev CCTP burn params for a settlement: the finality threshold and the maxFee allowance
+    ///      (`toBurn × feeRate / 1e6`, each rate bounded by the immutable cap). `useFast` selects fast
+    ///      (confirmed-level attestation, charges a fee) vs standard (finalized, free). {sweep} always
+    ///      passes false — see {_settle}. Fees: https://developers.circle.com/cctp/concepts/fees
+    function _cctpParams(uint256 toBurn, bool useFast) internal view returns (uint32 finality, uint256 maxFee) {
+        finality = useFast ? FINALITY_FAST : FINALITY_STANDARD;
+        uint256 feeRate = useFast ? config.cctpFastMaxFeeBps() : config.cctpStandardMaxFeeBps();
+        maxFee = toBurn * _min(feeRate, config.maxCctpFeeBps()) / BPS_DENOM;
     }
 
     /// @notice Settle the balance (capped at CCTP's per-message burn limit) to the recipient.
@@ -195,11 +229,15 @@ contract DepositForwarder {
 
         address tokenMessenger = config.tokenMessenger();
         bytes32 forwarder = config.stellarForwarder();
-        uint256 cctpMaxFee = toBurn * _min(config.cctpMaxFeeBps(), config.maxCctpFeeBps()) / BPS_DENOM;
+        // {flush} (chargeFees) honours the address's committed fast/standard mode; {sweep} (the
+        // permissionless escape hatch, chargeFees=false) ALWAYS uses standard — the free, universally
+        // available CCTP path — so a fast address can never be stranded by an unset/insufficient fast fee
+        // allowance, an unsupported chain, or a Circle fast-fee spike. Self-rescue is unconditional.
+        (uint32 finality, uint256 cctpMaxFee) = _cctpParams(toBurn, chargeFees && _fast());
         require(usdc.approve(tokenMessenger, toBurn), "approve failed");
         ITokenMessengerV2(tokenMessenger)
             .depositForBurnWithHook(
-                toBurn, STELLAR_DOMAIN, forwarder, address(usdc), forwarder, cctpMaxFee, FINALITY_STANDARD, _hookData()
+                toBurn, STELLAR_DOMAIN, forwarder, address(usdc), forwarder, cctpMaxFee, finality, _hookData()
             );
 
         // viaSweep == !chargeFees (a sweep takes no fee)
@@ -233,7 +271,7 @@ contract DepositForwarder {
     ///      forwarder's parser byte-for-byte.
     /// @return The hookData bytes.
     function _hookData() internal view returns (bytes memory) {
-        bytes memory recipientBytes = Clones.fetchCloneArgs(address(this));
+        bytes memory recipientBytes = _recipient();
         return abi.encodePacked(bytes24(0), uint32(0), uint32(recipientBytes.length), recipientBytes);
     }
 

@@ -13,9 +13,12 @@ interface ITokenMessengerV2 {
     /// @param mintRecipient Destination mint recipient as bytes32 (the Stellar forwarder).
     /// @param burnToken Token to burn on this chain (USDC).
     /// @param destinationCaller Address allowed to receive on the destination (the Stellar forwarder).
-    /// @param maxFee Max CCTP fee the caller accepts (deducted from `amount`); `minFinalityThreshold` 2000
-    ///        keeps it a standard transfer, whose fee is 0 today.
-    /// @param minFinalityThreshold Finality threshold; 2000 = standard finality.
+    /// @param maxFee Max CCTP fee the caller accepts (deducted from `amount`). With `minFinalityThreshold`
+    ///        >= 2000 (standard) the fee is 0 today; with <= 1000 (fast) it must cover the chain's fast fee
+    ///        or the burn reverts. Fast fees can change — see https://developers.circle.com/cctp/concepts/fees
+    /// @param minFinalityThreshold Finality threshold: >= 2000 = standard (finalized, free), <= 1000 = fast
+    ///        (confirmed, charges a fee). This forwarder passes 1000 or 2000 per the clone's committed mode.
+    ///        See https://developers.circle.com/cctp/concepts/finality-and-block-confirmations
     /// @param hookData Post-mint hook payload (here: the committed Stellar recipient).
     function depositForBurnWithHook(
         uint256 amount,
@@ -76,9 +79,14 @@ interface IDepositConfig {
     function baseFee() external view returns (uint256);
     /// @notice Current per-settlement proportional fee, in millionths of the settled amount.
     function feeBps() external view returns (uint256);
-    /// @notice CCTP fee-rate cap per burn, in millionths of the burned amount: the on-chain `maxFee` is
-    ///         `toBurn × cctpMaxFeeBps / 1e6`. 0 for free standard transfers.
-    function cctpMaxFeeBps() external view returns (uint256);
+    /// @notice CCTP fee allowance for STANDARD burns, in millionths of the burned amount: the on-chain
+    ///         `maxFee` is `toBurn × cctpStandardMaxFeeBps / 1e6`. Standard transfers are free today, so 0
+    ///         is fine; a small buffer guards against a future standard fee.
+    function cctpStandardMaxFeeBps() external view returns (uint256);
+    /// @notice CCTP fee allowance for FAST burns, in millionths of the burned amount: the on-chain `maxFee`
+    ///         is `toBurn × cctpFastMaxFeeBps / 1e6`. Must cover the chain's fast fee (Circle quotes bps, so
+    ///         ×100: 14 bps → 1400). Which allowance applies is committed per-address in the clone's args.
+    function cctpFastMaxFeeBps() external view returns (uint256);
     /// @notice Destination for collected fees.
     function feeCollector() external view returns (address);
     /// @notice Operator-priority window: how long after `requestSweep()` before anyone may `sweep()`.

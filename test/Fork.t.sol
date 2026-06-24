@@ -39,19 +39,19 @@ contract CwiaForkTest {
         cfg.setFactory(address(factory));
 
         bytes memory recipient = bytes("GA7PTNNXUYQYGFKETYSIVDWFYCD5GTINV44ES63LBL3LQWLD6B36KYTE");
-        address fwd = factory.computeAddress(recipient, 0);
+        address fwd = factory.computeAddress(recipient, 0, false);
 
         vm.store(USDC, keccak256(abi.encode(fwd, USDC_BALANCES_SLOT)), bytes32(uint256(100000)));
         require(IUSDC(USDC).balanceOf(fwd) == 100000, "funding failed (wrong slot?)");
 
-        factory.deployAndFlush(recipient, 0); // fees default 0 => full burn
+        factory.deployAndFlush(recipient, 0, false); // fees default 0 => full burn
         require(IUSDC(USDC).balanceOf(fwd) == 0, "USDC not burned -- CWIA flush failed vs real CCTP");
 
         // Also exercise sweep(), which reads the REAL TokenMinter.burnLimitsPerMessage via the real
         // TokenMessenger.localMinter() — validates those interface signatures against live CCTP V2.
-        address fwd2 = factory.computeAddress(recipient, 1);
+        address fwd2 = factory.computeAddress(recipient, 1, false);
         vm.store(USDC, keccak256(abi.encode(fwd2, USDC_BALANCES_SLOT)), bytes32(uint256(100000)));
-        factory.deploy(recipient, 1);
+        factory.deploy(recipient, 1, false);
         DepositForwarder(fwd2).requestSweep(); // sweepDelay defaults to 0 => immediately sweepable
         DepositForwarder(fwd2).sweep();
         require(IUSDC(USDC).balanceOf(fwd2) == 0, "sweep failed vs real CCTP (burn-limit read?)");
