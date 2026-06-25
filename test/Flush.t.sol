@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.35;
 
-import {Base} from "./Base.t.sol";
+import {Base, Vm} from "./Base.t.sol";
 import {Config} from "../src/Config.sol";
 import {IDepositConfig} from "../src/interfaces.sol";
 import {DepositForwarder} from "../src/DepositForwarder.sol";
@@ -105,6 +105,39 @@ contract FlushTest is Base {
         require(tm.lastFinality() == 1000, "fast address -> finality 1000");
         uint256 toBurn = 100e6 - (SETUP + BASE + _pct(100e6));
         require(tm.lastMaxFee() == (toBurn * 1400 + 1e6 - 1) / 1e6, "fast maxFee = ceil(toBurn x fastBps / 1e6)");
+    }
+
+    /// The Settled event reports the EFFECTIVE mode actually used (not just the address flag): a fast address
+    /// emits fast=true while enabled, fast=false once governance disables fast.
+    function test_settled_event_reports_effective_fast() public {
+        config.setCctpFastMaxFeeBps(1400);
+        config.setFastEnabled(true);
+        address addr = factory.computeAddress(_r(), 8, true);
+        usdc.mint(addr, 100e6);
+        vm.recordLogs();
+        factory.deployAndFlush(_r(), 8, true);
+        require(_settledFast(), "fast flush -> Settled.fast true");
+
+        config.setFastEnabled(false); // same fast address now settles standard
+        usdc.mint(addr, 100e6);
+        vm.recordLogs();
+        DepositForwarder(addr).flush();
+        require(!_settledFast(), "fast disabled -> Settled.fast false");
+    }
+
+    /// Decode the `fast` field of the last Settled event from the recorded logs (caller is the only indexed
+    /// param, so the data tuple is settled, setupFee, perSettleFee, burned, viaSweep, fast).
+    function _settledFast() internal returns (bool fast) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("Settled(address,uint256,uint256,uint256,uint256,bool,bool)");
+        for (uint256 i = logs.length; i > 0; i--) {
+            Vm.Log memory entry = logs[i - 1];
+            if (entry.topics.length > 0 && entry.topics[0] == sig) {
+                (,,,,, fast) = abi.decode(entry.data, (uint256, uint256, uint256, uint256, bool, bool));
+                return fast;
+            }
+        }
+        revert("no Settled event");
     }
 
     /// Governance kill-switch: a fast address settles via STANDARD while fastEnabled is false (the default),

@@ -55,8 +55,17 @@ contract DepositForwarder {
     /// @param perSettleFee Per-settlement fee — `baseFee + settled × feeBps` (0 on a fee-free sweep).
     /// @param burned Amount burned via CCTP to the recipient.
     /// @param viaSweep True if this was the permissionless escape hatch ({sweep}); false for an operator {flush}.
+    /// @param fast True if this settlement actually used a CCTP fast transfer (finality 1000); false for
+    ///        standard. Reflects the EFFECTIVE mode, not just the address flag: a sweep, or fast disabled on
+    ///        the chain, settles standard even at a fast address.
     event Settled(
-        address indexed caller, uint256 settled, uint256 setupFee, uint256 perSettleFee, uint256 burned, bool viaSweep
+        address indexed caller,
+        uint256 settled,
+        uint256 setupFee,
+        uint256 perSettleFee,
+        uint256 burned,
+        bool viaSweep,
+        bool fast
     );
     /// @notice Emitted when stray native coin is rescued.
     /// @param to The rescue sink.
@@ -238,22 +247,29 @@ contract DepositForwarder {
         if (chargeFees) (setupFee, perSettleFee) = _collectFees(usdc, amount);
         uint256 toBurn = amount - setupFee - perSettleFee;
 
-        address tokenMessenger = config.tokenMessenger();
-        bytes32 forwarder = config.stellarForwarder();
         // Fast applies only when ALL hold: this is a fee-charging {flush} (the permissionless escape hatch
         // {sweep}, chargeFees=false, ALWAYS uses standard), the address committed to fast, AND governance has
         // fast enabled on this chain. So a fast address can never be stranded — sweep, a disabled switch, or
         // a standard fall-back all settle via standard (free, universally available). Self-rescue is
         // unconditional, and governance can kill fast (unsupported chain / fee spike) without stranding funds.
-        (uint32 finality, uint256 cctpMaxFee) = _cctpParams(toBurn, chargeFees && _fast() && config.fastEnabled());
+        bool useFast = chargeFees && _fast() && config.fastEnabled();
+        _burnViaCctp(usdc, toBurn, useFast);
+
+        // viaSweep == !chargeFees (a sweep takes no fee); `useFast` is the EFFECTIVE mode actually used.
+        emit Settled(msg.sender, amount, setupFee, perSettleFee, toBurn, !chargeFees, useFast);
+    }
+
+    /// @dev Approve and burn `toBurn` to the committed recipient via CCTP, with the finality + maxFee for
+    ///      `useFast`. Split out of {_settle} to keep its stack shallow.
+    function _burnViaCctp(IERC20 usdc, uint256 toBurn, bool useFast) internal {
+        (uint32 finality, uint256 cctpMaxFee) = _cctpParams(toBurn, useFast);
+        address tokenMessenger = config.tokenMessenger();
+        bytes32 forwarder = config.stellarForwarder();
         require(usdc.approve(tokenMessenger, toBurn), "approve failed");
         ITokenMessengerV2(tokenMessenger)
             .depositForBurnWithHook(
                 toBurn, STELLAR_DOMAIN, forwarder, address(usdc), forwarder, cctpMaxFee, finality, _hookData()
             );
-
-        // viaSweep == !chargeFees (a sweep takes no fee)
-        emit Settled(msg.sender, amount, setupFee, perSettleFee, toBurn, !chargeFees);
     }
 
     /// @dev Compute and transfer the fees for settling `settled`: a one-time `setupFee` plus the

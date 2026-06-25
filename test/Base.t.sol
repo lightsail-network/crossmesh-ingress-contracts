@@ -10,11 +10,21 @@ import {MockTokenMessenger} from "./mocks/MockTokenMessenger.sol";
 import {MockTokenMinter} from "./mocks/MockTokenMinter.sol";
 
 interface Vm {
+    struct Log {
+        bytes32[] topics;
+        bytes data;
+        address emitter;
+    }
+
     function prank(address) external;
 
     function warp(uint256) external;
 
     function deal(address, uint256) external;
+
+    function recordLogs() external;
+
+    function getRecordedLogs() external returns (Log[] memory);
 }
 
 /// Shared fixture for the DepositForwarder unit suites: a wired Config + impl + factory over mocks, with
