@@ -87,6 +87,8 @@ interface IDepositConfig {
     ///         is `toBurn × cctpFastMaxFeeBps / 1e6`. Must cover the chain's fast fee (Circle quotes bps, so
     ///         ×100: 14 bps → 1400). Which allowance applies is committed per-address in the clone's args.
     function cctpFastMaxFeeBps() external view returns (uint256);
+    /// @notice Chain-level master switch: a fast-flagged address settles fast only while true, else standard.
+    function fastEnabled() external view returns (bool);
     /// @notice Destination for collected fees.
     function feeCollector() external view returns (address);
     /// @notice Operator-priority window: how long after `requestSweep()` before anyone may `sweep()`.

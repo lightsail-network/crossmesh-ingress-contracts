@@ -33,6 +33,7 @@ contract SweepTest is Base {
     function test_fast_address_sweep_uses_standard_finality() public {
         address fwd = factory.deploy(_r(), 3, true); // a FAST address
         config.setCctpFastMaxFeeBps(1400);
+        config.setFastEnabled(true);
 
         usdc.mint(fwd, 50e6);
         DepositForwarder(fwd).flush(); // operator path → committed fast mode

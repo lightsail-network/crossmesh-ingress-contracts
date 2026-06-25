@@ -240,11 +240,12 @@ contract DepositForwarder {
 
         address tokenMessenger = config.tokenMessenger();
         bytes32 forwarder = config.stellarForwarder();
-        // {flush} (chargeFees) honours the address's committed fast/standard mode; {sweep} (the
-        // permissionless escape hatch, chargeFees=false) ALWAYS uses standard — the free, universally
-        // available CCTP path — so a fast address can never be stranded by an unset/insufficient fast fee
-        // allowance, an unsupported chain, or a Circle fast-fee spike. Self-rescue is unconditional.
-        (uint32 finality, uint256 cctpMaxFee) = _cctpParams(toBurn, chargeFees && _fast());
+        // Fast applies only when ALL hold: this is a fee-charging {flush} (the permissionless escape hatch
+        // {sweep}, chargeFees=false, ALWAYS uses standard), the address committed to fast, AND governance has
+        // fast enabled on this chain. So a fast address can never be stranded — sweep, a disabled switch, or
+        // a standard fall-back all settle via standard (free, universally available). Self-rescue is
+        // unconditional, and governance can kill fast (unsupported chain / fee spike) without stranding funds.
+        (uint32 finality, uint256 cctpMaxFee) = _cctpParams(toBurn, chargeFees && _fast() && config.fastEnabled());
         require(usdc.approve(tokenMessenger, toBurn), "approve failed");
         ITokenMessengerV2(tokenMessenger)
             .depositForBurnWithHook(

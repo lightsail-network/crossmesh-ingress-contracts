@@ -39,6 +39,7 @@ contract Config is IDepositConfig {
     uint256 public override feeBps;
     uint256 public override cctpStandardMaxFeeBps; // standard-burn CCTP fee allowance (millionths); 0 today
     uint256 public override cctpFastMaxFeeBps; // fast-burn CCTP fee allowance (millionths); covers the chain's fast fee
+    bool public override fastEnabled; // chain-level master switch: fast addresses settle fast only while true
     address public override feeCollector;
     uint256 public override sweepDelay;
     mapping(address => bool) public override isOperator;
@@ -65,6 +66,8 @@ contract Config is IDepositConfig {
     event CctpStandardMaxFeeBpsSet(uint256 cctpStandardMaxFeeBps);
     /// @notice Emitted when the fast-burn CCTP fee allowance is set.
     event CctpFastMaxFeeBpsSet(uint256 cctpFastMaxFeeBps);
+    /// @notice Emitted when the fast master switch is toggled.
+    event FastEnabledSet(bool fastEnabled);
     /// @notice Emitted when the fee collector is set.
     event FeeCollectorSet(address indexed feeCollector);
     /// @notice Emitted when the sweep delay is set.
@@ -146,6 +149,17 @@ contract Config is IDepositConfig {
         require(value <= maxCctpFeeBps, "above cap");
         cctpFastMaxFeeBps = value;
         emit CctpFastMaxFeeBpsSet(value);
+    }
+
+    /// @notice Chain-level master switch for CCTP fast transfers. A fast-flagged deposit address settles
+    ///         fast ONLY while this is true; when false, even fast addresses settle via standard (free,
+    ///         universally available). Enable only after confirming the chain supports fast and
+    ///         `cctpFastMaxFeeBps` covers its fee; flip off as a kill-switch if fast breaks (unsupported,
+    ///         fee spike past the cap) so funds keep settling via standard instead of stranding.
+    /// @param value True to allow fast settlement on this chain, false to force standard.
+    function setFastEnabled(bool value) external onlyOwner {
+        fastEnabled = value;
+        emit FastEnabledSet(value);
     }
 
     /// @notice Set the destination for collected fees.
