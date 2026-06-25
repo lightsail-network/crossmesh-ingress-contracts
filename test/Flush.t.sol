@@ -2,7 +2,10 @@
 pragma solidity 0.8.35;
 
 import {Base} from "./Base.t.sol";
+import {Config} from "../src/Config.sol";
+import {IDepositConfig} from "../src/interfaces.sol";
 import {DepositForwarder} from "../src/DepositForwarder.sol";
+import {DepositFactory} from "../src/DepositFactory.sol";
 
 /// Operator settlement (`flush`): full-balance settlement, the three service fees, the burn-limit cap, the
 /// CCTP fee rate, access control, and the interaction with a pending escape window.
@@ -100,7 +103,44 @@ contract FlushTest is Base {
         factory.deployAndFlush(_r(), 8, true);
         require(tm.lastFinality() == 1000, "fast address -> finality 1000");
         uint256 toBurn = 100e6 - (SETUP + BASE + _pct(100e6));
-        require(tm.lastMaxFee() == toBurn * 1400 / 1e6, "fast maxFee = toBurn x fastBps / 1e6");
+        require(tm.lastMaxFee() == (toBurn * 1400 + 1e6 - 1) / 1e6, "fast maxFee = ceil(toBurn x fastBps / 1e6)");
+    }
+
+    /// A non-zero fast fee on a SMALL burn rounds the maxFee allowance UP to >= 1 subunit, matching CCTP's
+    /// 1-subunit minimum fee (a floored 0 would revert "Insufficient max fee" on-chain). Fresh fee-free
+    /// config so toBurn == balance.
+    function test_fast_maxfee_rounds_up_to_minimum() public {
+        Config c2 = new Config(address(this));
+        c2.init(address(usdc), address(tm), FORWARDER);
+        DepositForwarder impl2 = new DepositForwarder(IDepositConfig(address(c2)));
+        DepositFactory f2 = new DepositFactory(address(impl2));
+        c2.setOperator(address(this), true);
+        c2.setFactory(address(f2));
+        c2.setFeeCollector(FEE);
+        c2.setCctpFastMaxFeeBps(1); // 1 millionth → floors to 0 for any toBurn < 1e6
+
+        address addr = f2.computeAddress(_r(), 1, true); // fast
+        usdc.mint(addr, 100); // toBurn 100; 100 * 1 / 1e6 floors to 0 -> ceil 1
+        f2.deployAndFlush(_r(), 1, true);
+        require(tm.lastMaxFee() == 1, "non-zero fast fee on a small burn rounds up to >= 1");
+    }
+
+    /// CCTP requires maxFee < amount. A toBurn == 1 settlement with a non-zero allowance buffer would ceil to
+    /// maxFee == amount; clamp it below so a settlement still succeeds when Circle's ACTUAL fee is 0.
+    function test_maxfee_clamped_below_amount() public {
+        Config c2 = new Config(address(this));
+        c2.init(address(usdc), address(tm), FORWARDER);
+        DepositForwarder impl2 = new DepositForwarder(IDepositConfig(address(c2)));
+        DepositFactory f2 = new DepositFactory(address(impl2));
+        c2.setOperator(address(this), true);
+        c2.setFactory(address(f2));
+        c2.setFeeCollector(FEE);
+        c2.setCctpStandardMaxFeeBps(100); // non-zero standard buffer (Circle's actual standard fee is 0)
+
+        address addr = f2.computeAddress(_r(), 1, false); // standard, no service fee on c2
+        usdc.mint(addr, 1); // toBurn == 1
+        f2.deployAndFlush(_r(), 1, false);
+        require(tm.lastMaxFee() == 0, "maxFee clamped below amount for a 1-subunit settlement");
     }
 
     /// The same (recipient, index) yields DIFFERENT addresses for fast vs standard — one recipient can offer

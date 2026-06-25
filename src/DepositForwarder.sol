@@ -107,8 +107,19 @@ contract DepositForwarder {
     ///      passes false — see {_settle}. Fees: https://developers.circle.com/cctp/concepts/fees
     function _cctpParams(uint256 toBurn, bool useFast) internal view returns (uint32 finality, uint256 maxFee) {
         finality = useFast ? FINALITY_FAST : FINALITY_STANDARD;
-        uint256 feeRate = useFast ? config.cctpFastMaxFeeBps() : config.cctpStandardMaxFeeBps();
-        maxFee = toBurn * _min(feeRate, config.maxCctpFeeBps()) / BPS_DENOM;
+        uint256 rate =
+            _min(useFast ? config.cctpFastMaxFeeBps() : config.cctpStandardMaxFeeBps(), config.maxCctpFeeBps());
+        // Round the allowance UP for a non-zero rate: CCTP's TokenMessengerV2 floors a non-zero proportional
+        // fee to a 1-subunit minimum (`_calcMinFeeAmount`), so a maxFee that floored to 0 on a small burn
+        // would be "Insufficient max fee" and revert. maxFee is only a ceiling (the actual fee, <= maxFee,
+        // is what's charged), so rounding up costs nothing.
+        uint256 fee = rate == 0 ? 0 : (toBurn * rate + BPS_DENOM - 1) / BPS_DENOM;
+        // CCTP also requires maxFee < amount (unconditional). At toBurn == 1 a non-zero allowance ceils to
+        // maxFee == toBurn and would revert there — even when Circle's ACTUAL fee is 0 (the allowance is only
+        // a ceiling, not the charged fee), where a zero maxFee settles fine (e.g. a 1-subunit dust sweep with
+        // a standard buffer set). Clamp below the amount so that case succeeds. A toBurn == 1 burn that truly
+        // needs a non-zero CCTP fee stays impossible regardless (minFee >= 1 vs maxFee < 1).
+        maxFee = fee >= toBurn ? toBurn - 1 : fee;
     }
 
     /// @notice Settle the balance (capped at CCTP's per-message burn limit) to the recipient.
