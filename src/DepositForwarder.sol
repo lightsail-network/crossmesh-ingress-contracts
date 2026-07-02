@@ -77,10 +77,10 @@ contract DepositForwarder {
     /// @param amount Token amount swept.
     event RescuedERC20(address indexed token, address indexed to, uint256 amount);
 
-    /// @param _config The shared per-chain config.
-    constructor(IDepositConfig _config) {
-        require(address(_config) != address(0), "zero config");
-        config = _config;
+    /// @param config_ The shared per-chain config.
+    constructor(IDepositConfig config_) {
+        require(address(config_) != address(0), "zero config");
+        config = config_;
     }
 
     /// @notice This clone's committed Stellar recipient, read from its immutable args.
@@ -99,6 +99,9 @@ contract DepositForwarder {
     ///      trailing flag; shorten the fetched buffer by one instead of copying.
     function _recipient() internal view returns (bytes memory r) {
         r = Clones.fetchCloneArgs(address(this));
+        // Slither assembly: only rewrites the buffer's own length word (memory-safe) to drop the trailing
+        // flag byte without a copy; writes nothing outside the buffer.
+        // slither-disable-next-line assembly
         assembly ("memory-safe") {
             mstore(r, sub(mload(r), 1))
         }
@@ -139,6 +142,9 @@ contract DepositForwarder {
     ///      down by what flush settles; the countdown clears once that budget is spent or the balance is
     ///      fully drained, but a partial flush that leaves both keeps it — so flush can't reset a depositor's
     ///      self-rescue clock. Reconcile off-chain from the {Settled} event.
+    // Slither reentrancy-benign: {_settle}'s external calls go only to USDC and Circle's TokenMessenger
+    // (trusted, no untrusted callback); the post-call sweepCap drawdown is bounded by the armed snapshot.
+    // slither-disable-next-line reentrancy-benign
     function flush() external {
         require(config.isOperator(msg.sender) || msg.sender == config.factory(), "not operator");
         IERC20 usdc = IERC20(config.usdc());
@@ -149,8 +155,14 @@ contract DepositForwarder {
         // If a sweep is pending, draw its armed budget down by what we settled — so flushing the armed funds
         // leaves no stale free-sweep allowance — and clear once that budget is spent or the balance is fully
         // drained. A partial flush that leaves both keeps the original window (can't reset the self-rescue clock).
+        // Slither timestamp: `sweepableAt != 0` is the is-armed sentinel check (0 = no sweep requested),
+        // not a deadline comparison a validator could nudge.
+        // slither-disable-next-line timestamp
         if (sweepableAt != 0) {
             sweepCap = sweepCap > amount ? sweepCap - amount : 0;
+            // Slither incorrect-equality: exact `== 0` sentinels — budget fully spent / balance fully
+            // drained; closing the window early only re-requires {requestSweep}, it cannot strand funds.
+            // slither-disable-next-line incorrect-equality
             if (sweepCap == 0 || usdc.balanceOf(address(this)) == 0) sweepableAt = 0;
         }
     }
@@ -163,6 +175,9 @@ contract DepositForwarder {
     function requestSweep() external {
         uint256 balance = IERC20(config.usdc()).balanceOf(address(this));
         require(balance > 0, "nothing to sweep");
+        // Slither timestamp/incorrect-equality: `sweepableAt == 0` is the not-yet-armed sentinel (0 is
+        // never a real deadline); it only makes re-requests idempotent while armed.
+        // slither-disable-next-line timestamp,incorrect-equality
         if (sweepableAt == 0) {
             uint256 delay = _min(config.sweepDelay(), config.maxSweepDelay());
             sweepableAt = block.timestamp + delay;
@@ -181,9 +196,17 @@ contract DepositForwarder {
     ///      cap's worth and keeps the window OPEN (remainder drains with no fresh cooldown); the window clears
     ///      once the armed budget is spent or the balance is drained. `sweepDelay` is hours/days, so
     ///      second-level `block.timestamp` drift by a validator is immaterial here.
+    // Slither reentrancy-no-eth: {_settle}'s external calls go only to USDC and Circle's TokenMessenger
+    // (trusted, no untrusted callback); the post-call window close only ever shrinks what a re-entrant
+    // sweep could settle.
+    // slither-disable-next-line reentrancy-no-eth
     function sweep() external {
+        // Slither timestamp: safe per the drift note in the @dev above — `sweepDelay` is hours/days, so
+        // second-level validator drift cannot meaningfully open the window early.
+        // slither-disable-start timestamp
         // forge-lint: disable-next-line(block-timestamp)
         require(sweepableAt != 0 && block.timestamp >= sweepableAt, "not sweepable yet");
+        // slither-disable-end timestamp
         IERC20 usdc = IERC20(config.usdc());
         uint256 balance = usdc.balanceOf(address(this));
         uint256 limit = _burnLimit();
@@ -191,6 +214,9 @@ contract DepositForwarder {
         if (amount > limit) amount = limit; // nor beyond one CCTP burn cap
         _settle(amount, false);
         sweepCap -= amount;
+        // Slither incorrect-equality: exact `== 0` sentinels — budget fully spent / balance fully drained;
+        // closing the window early only re-requires {requestSweep}, it cannot strand funds.
+        // slither-disable-next-line incorrect-equality
         if (sweepCap == 0 || usdc.balanceOf(address(this)) == 0) {
             sweepableAt = 0; // armed budget spent or fully drained: close the window
             sweepCap = 0;
@@ -206,9 +232,13 @@ contract DepositForwarder {
         address sink = config.rescueSink();
         require(sink != address(0), "sink unset");
         uint256 amount = address(this).balance;
+        emit RescuedNative(sink, amount);
+        // Slither arbitrary-send-eth/low-level-calls: `sink` is the governance-set rescue sink (checked
+        // non-zero above), never caller input — the operator cannot redirect it; a raw call (not transfer)
+        // because the sink may be a contract (e.g. a Safe) needing more than the 2300 gas stipend.
+        // slither-disable-next-line arbitrary-send-eth,low-level-calls
         (bool ok,) = sink.call{value: amount}("");
         require(ok, "rescue failed");
-        emit RescuedNative(sink, amount);
     }
 
     /// @notice Recover a mis-sent non-USDC token to the rescue sink. Operator only.
@@ -237,13 +267,17 @@ contract DepositForwarder {
     /// @param amount Amount to settle (`0 < amount <= balance`).
     /// @param chargeFees Whether to collect fees. {flush} passes `true`; {sweep} passes `false` so the
     ///        escape hatch returns the FULL balance — the service takes nothing when it did not do the work.
+    // Slither reentrancy-events: the burn goes to Circle's TokenMessenger (trusted); emitting {Settled}
+    // after it means the event only fires for a burn that actually succeeded.
+    // slither-disable-next-line reentrancy-events
     function _settle(uint256 amount, bool chargeFees) internal {
         IERC20 usdc = IERC20(config.usdc());
         uint256 balance = usdc.balanceOf(address(this));
         require(amount > 0 && amount <= balance, "bad amount");
 
-        uint256 setupFee;
-        uint256 perSettleFee;
+        // Explicit zeros: a fee-free settlement ({sweep}) charges nothing by construction.
+        uint256 setupFee = 0;
+        uint256 perSettleFee = 0;
         if (chargeFees) (setupFee, perSettleFee) = _collectFees(usdc, amount);
         uint256 toBurn = amount - setupFee - perSettleFee;
 

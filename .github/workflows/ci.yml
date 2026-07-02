@@ -37,3 +37,23 @@ jobs:
 
       - name: Lint (production sources)
         run: forge lint src/ script/
+
+  slither:
+    name: slither
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install Slither
+        run: pipx install slither-analyzer==0.11.5
+
+      - name: Slither (production sources)
+        run: slither .

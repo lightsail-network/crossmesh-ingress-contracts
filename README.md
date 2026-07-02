@@ -15,6 +15,17 @@ forge test # unit tests
 FORK_RPC=https://ethereum-rpc.publicnode.com forge test --match-contract Fork # real CCTP on an Ethereum fork
 ```
 
+## Static analysis
+
+```sh
+pipx install slither-analyzer==0.11.5 # match the CI pin
+slither . # scope in slither.config.json (src/ only); expected finding count is zero
+```
+
+Intentional patterns (governance-fixed rescue sink, `== 0` sentinel checks, trusted USDC/CCTP external
+calls, hour-scale timestamp comparisons) are suppressed inline with `slither-disable` comments next to a
+justification — new findings therefore always fail CI.
+
 ## License
 
 MIT
