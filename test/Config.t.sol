@@ -7,8 +7,8 @@ import {IDepositConfig} from "../src/interfaces.sol";
 import {DepositForwarder} from "../src/DepositForwarder.sol";
 import {DepositFactory} from "../src/DepositFactory.sol";
 
-/// Config governance: immutable-cap clamps, owner-only setters, the `feeCollector` non-zero guard, the
-/// one-time `init`, and ownership transfer.
+/// Config governance: immutable-cap clamps, owner-only setters, the `feeCollector` / `rescueSink`
+/// non-zero guards, the one-time `init`, and ownership transfer.
 contract ConfigTest is Base {
     /// Tunable fees are clamped to their immutable caps.
     function test_fee_setters_capped() public {
