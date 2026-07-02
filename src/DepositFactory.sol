@@ -21,12 +21,12 @@ contract DepositFactory {
     /// @param fast Whether this address settles via a CCTP fast transfer (committed in the clone's args).
     event Deployed(address indexed forwarder, bytes recipient, uint256 index, bool fast);
 
-    /// @param _implementation The shared DepositForwarder implementation.
-    constructor(address _implementation) {
+    /// @param implementation_ The shared DepositForwarder implementation.
+    constructor(address implementation_) {
         // Must be a live contract: clones delegatecall into it, so a non-contract impl would brick them.
         // (code.length > 0 also implies non-zero.)
-        require(_implementation.code.length > 0, "implementation not a contract");
-        implementation = _implementation;
+        require(implementation_.code.length > 0, "implementation not a contract");
+        implementation = implementation_;
     }
 
     /// @dev The clone's immutable args: the recipient followed by a 1-byte fast flag (1 = CCTP fast
@@ -74,7 +74,7 @@ contract DepositFactory {
         bytes32 salt = _salt(recipient, index);
         forwarder = Clones.predictDeterministicAddressWithImmutableArgs(implementation, args, salt, address(this));
         if (forwarder.code.length == 0) {
-            Clones.cloneDeterministicWithImmutableArgs(implementation, args, salt);
+            forwarder = Clones.cloneDeterministicWithImmutableArgs(implementation, args, salt);
             emit Deployed(forwarder, recipient, index, fast);
         }
     }

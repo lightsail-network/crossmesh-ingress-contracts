@@ -47,7 +47,7 @@ contract Config is IDepositConfig {
     address public override rescueSink;
 
     /// @notice Emitted once when the USDC path is wired by {init}.
-    event Initialized(address usdc, address tokenMessenger, bytes32 stellarForwarder);
+    event Initialized(address indexed usdc, address indexed tokenMessenger, bytes32 stellarForwarder);
     /// @notice Emitted when a two-step ownership transfer is proposed (or cancelled, with `to == address(0)`).
     /// @param from Current owner.
     /// @param to Proposed new owner.
@@ -85,25 +85,25 @@ contract Config is IDepositConfig {
         _;
     }
 
-    /// @param _owner Initial governance address (must be identical on every chain for stable addresses).
-    constructor(address _owner) {
-        require(_owner != address(0), "zero owner");
-        owner = _owner;
-        emit OwnerTransferred(address(0), _owner);
+    /// @param owner_ Initial governance address (must be identical on every chain for stable addresses).
+    constructor(address owner_) {
+        require(owner_ != address(0), "zero owner");
+        owner = owner_;
+        emit OwnerTransferred(address(0), owner_);
     }
 
     /// @notice Wire the per-chain USDC path. Callable once, by the owner.
-    /// @param _usdc The chain's USDC token.
-    /// @param _tokenMessenger The chain's CCTP V2 TokenMessenger.
-    /// @param _stellarForwarder The Stellar forwarder (as bytes32) that receives the CCTP mint.
-    function init(address _usdc, address _tokenMessenger, bytes32 _stellarForwarder) external onlyOwner {
+    /// @param usdc_ The chain's USDC token.
+    /// @param tokenMessenger_ The chain's CCTP V2 TokenMessenger.
+    /// @param stellarForwarder_ The Stellar forwarder (as bytes32) that receives the CCTP mint.
+    function init(address usdc_, address tokenMessenger_, bytes32 stellarForwarder_) external onlyOwner {
         require(!initialized, "already initialized");
-        require(_usdc != address(0) && _tokenMessenger != address(0) && _stellarForwarder != bytes32(0), "zero");
-        usdc = _usdc;
-        tokenMessenger = _tokenMessenger;
-        stellarForwarder = _stellarForwarder;
+        require(usdc_ != address(0) && tokenMessenger_ != address(0) && stellarForwarder_ != bytes32(0), "zero");
+        usdc = usdc_;
+        tokenMessenger = tokenMessenger_;
+        stellarForwarder = stellarForwarder_;
         initialized = true;
-        emit Initialized(_usdc, _tokenMessenger, _stellarForwarder);
+        emit Initialized(usdc_, tokenMessenger_, stellarForwarder_);
     }
 
     /// @notice Set the one-time setup fee.
@@ -189,15 +189,22 @@ contract Config is IDepositConfig {
     }
 
     /// @notice Set the factory trusted to relay the operator's one-tx deploy+flush.
-    /// @param value New factory.
+    /// @param value New factory; `address(0)` unsets it (distrusts the factory relay path).
     function setFactory(address value) external onlyOwner {
+        // Slither missing-zero-check: zero is a VALID value — it unsets the factory (distrusts the relay
+        // path; see @param). A wrong factory cannot redirect funds anyway: it only gates deployAndFlush.
+        // slither-disable-next-line missing-zero-check
         factory = value;
         emit FactorySet(value);
     }
 
     /// @notice Set the destination for rescued stray native coin / non-USDC tokens.
-    /// @param value New rescue sink.
+    /// @dev A sink is a destination, never a trusted caller, so there is no unset-to-revoke use case (a
+    ///      bad sink is replaced with a good one) — zero stays only as the never-set default, during
+    ///      which the forwarder refuses to rescue ("sink unset").
+    /// @param value New rescue sink; must be non-zero.
     function setRescueSink(address value) external onlyOwner {
+        require(value != address(0), "zero rescue sink");
         rescueSink = value;
         emit RescueSinkSet(value);
     }
@@ -208,6 +215,9 @@ contract Config is IDepositConfig {
     ///      `address(0)` to cancel a pending transfer.
     /// @param to Proposed new owner (or `address(0)` to cancel).
     function transferOwnership(address to) external onlyOwner {
+        // Slither missing-zero-check: zero is a VALID value — it cancels a pending transfer (see @dev),
+        // and the two-step accept means a mistyped address can never actually take ownership.
+        // slither-disable-next-line missing-zero-check
         pendingOwner = to;
         emit OwnershipTransferStarted(owner, to);
     }

@@ -50,6 +50,15 @@ contract ConfigTest is Base {
         );
     }
 
+    /// `rescueSink` can't be set to the zero address (zero exists only as the never-set default, during
+    /// which the forwarder refuses to rescue).
+    function test_rescue_sink_must_be_nonzero() public {
+        require(
+            _reverts(address(config), abi.encodeWithSignature("setRescueSink(address)", address(0))),
+            "setRescueSink(0) must revert"
+        );
+    }
+
     /// Settling a non-zero fee with an unset (zero) feeCollector reverts instead of burning the fee.
     function test_fee_with_zero_collector_reverts() public {
         // Fresh config with a fee set but feeCollector left at its default address(0).
