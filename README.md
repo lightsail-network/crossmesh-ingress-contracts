@@ -22,9 +22,12 @@ pipx install slither-analyzer==0.11.5 # match the CI pin
 slither . # scope in slither.config.json (src/ only); expected finding count is zero
 ```
 
-Intentional patterns (governance-fixed rescue sink, `== 0` sentinel checks, trusted USDC/CCTP external
-calls, hour-scale timestamp comparisons) are suppressed inline with `slither-disable` comments next to a
-justification — new findings therefore always fail CI.
+Intentional patterns are suppressed inline, each `slither-disable` comment sitting next to a
+`// Slither <detector>: <why safe>` justification — new findings therefore always fail CI. The suppressed
+set: the sweep timelock's timestamp compare and its `== 0` armed/spent sentinels, reentrancy shapes whose
+external calls go only to trusted USDC / Circle CCTP contracts, the native-coin send to the
+governance-fixed rescue sink, zero-as-revoke governance setters (`setFactory`, `transferOwnership`), and
+an in-place assembly length tweak when reading the clone's immutable args.
 
 ## License
 

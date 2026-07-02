@@ -6,9 +6,10 @@ import {IDepositConfig} from "./interfaces.sol";
 /// @title Config
 /// @notice Shared, per-chain configuration that every `DepositForwarder` reads. The per-chain wiring
 ///         (USDC / TokenMessenger / Stellar forwarder) is set once via {init} into STORAGE — not init
-///         code — so the Config address is identical across chains. Fees, sweep delay, operator and
-///         factory are owner-tunable, but each is clamped by an IMMUTABLE cap that a user can verify
-///         before depositing.
+///         code — so the Config address is identical across chains. Fees and the sweep delay are
+///         owner-tunable, each clamped by an IMMUTABLE cap that a user can verify before depositing;
+///         the operator set, trusted factory and fee/rescue destinations are owner-set addresses whose
+///         worst case is bounded by those same caps (none of them can redirect the principal).
 /// @dev Governing rule for "may be mutable": only values that provably cannot redirect USDC. The USDC
 ///      path (usdc / tokenMessenger / stellarForwarder) is therefore immutable; fees are bounded by
 ///      immutable caps and `sweepDelay` by `maxSweepDelay`.
