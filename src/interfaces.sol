@@ -89,6 +89,10 @@ interface IDepositConfig {
     function cctpFastMaxFeeBps() external view returns (uint256);
     /// @notice Chain-level master switch: a fast-flagged address settles fast only while true, else standard.
     function fastEnabled() external view returns (bool);
+    /// @notice Access switch for {DepositForwarder.flush}: false (default) = operator/factory only;
+    ///         true = anyone may flush (and use the factory's one-tx deployAndFlush). Fees still apply
+    ///         per the fee config either way — pair with zeroed fees for a public-good wind-down.
+    function publicFlush() external view returns (bool);
     /// @notice Destination for collected fees.
     function feeCollector() external view returns (address);
     /// @notice Operator-priority window: how long after `requestSweep()` before anyone may `sweep()`.

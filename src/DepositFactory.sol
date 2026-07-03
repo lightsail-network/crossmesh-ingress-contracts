@@ -3,6 +3,7 @@ pragma solidity 0.8.35;
 
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {DepositForwarder} from "./DepositForwarder.sol";
+import {IDepositConfig} from "./interfaces.sol";
 
 /// @title DepositFactory
 /// @notice Deploys per-recipient {DepositForwarder} clones-with-immutable-args at deterministic CREATE2
@@ -79,7 +80,8 @@ contract DepositFactory {
         }
     }
 
-    /// @notice Operator one-tx: deploy (if needed) then flush the balance. OPERATOR-ONLY.
+    /// @notice One-tx: deploy (if needed) then flush the balance. OPERATOR-ONLY by default; open to
+    ///         EVERYONE while `config.publicFlush()` is on (fees per the fee config either way).
     /// @dev Self-rescue does not use this path; it goes through `deploy` + `requestSweep` + `sweep` directly.
     /// @param recipient The Stellar recipient (strkey UTF-8 bytes).
     /// @param index The per-recipient index.
@@ -87,7 +89,8 @@ contract DepositFactory {
     /// @return forwarder The clone address.
     function deployAndFlush(bytes calldata recipient, uint256 index, bool fast) external returns (address forwarder) {
         forwarder = deploy(recipient, index, fast);
-        require(DepositForwarder(forwarder).config().isOperator(msg.sender), "not operator");
+        IDepositConfig cfg = DepositForwarder(forwarder).config();
+        require(cfg.publicFlush() || cfg.isOperator(msg.sender), "not operator");
         DepositForwarder(forwarder).flush();
     }
 }

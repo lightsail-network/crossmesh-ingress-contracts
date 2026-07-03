@@ -40,6 +40,7 @@ contract Config is IDepositConfig {
     uint256 public override cctpStandardMaxFeeBps; // standard-burn CCTP fee allowance (millionths); 0 today
     uint256 public override cctpFastMaxFeeBps; // fast-burn CCTP fee allowance (millionths); covers the chain's fast fee
     bool public override fastEnabled; // chain-level master switch: fast addresses settle fast only while true
+    bool public override publicFlush; // access switch: while true, anyone may flush (fees still apply)
     address public override feeCollector;
     uint256 public override sweepDelay;
     mapping(address => bool) public override isOperator;
@@ -68,6 +69,8 @@ contract Config is IDepositConfig {
     event CctpFastMaxFeeBpsSet(uint256 cctpFastMaxFeeBps);
     /// @notice Emitted when the fast master switch is toggled.
     event FastEnabledSet(bool fastEnabled);
+    /// @notice Emitted when the flush access switch is toggled.
+    event PublicFlushSet(bool publicFlush);
     /// @notice Emitted when the fee collector is set.
     event FeeCollectorSet(address indexed feeCollector);
     /// @notice Emitted when the sweep delay is set.
@@ -160,6 +163,18 @@ contract Config is IDepositConfig {
     function setFastEnabled(bool value) external onlyOwner {
         fastEnabled = value;
         emit FastEnabledSet(value);
+    }
+
+    /// @notice Access switch for {DepositForwarder.flush} (and the factory's one-tx deployAndFlush):
+    ///         false (default) = operator/factory only; true = open to EVERYONE, with no
+    ///         {DepositForwarder.requestSweep} wait. Fees still apply per the fee config either way, so a
+    ///         public-good wind-down is this switch PLUS zeroed fees (and `fastEnabled` off) — each knob
+    ///         stays single-purpose. Cannot redirect USDC in either state — settlement always pays the
+    ///         committed recipient.
+    /// @param value True to open flush to everyone, false for operator/factory only.
+    function setPublicFlush(bool value) external onlyOwner {
+        publicFlush = value;
+        emit PublicFlushSet(value);
     }
 
     /// @notice Set the destination for collected fees.
