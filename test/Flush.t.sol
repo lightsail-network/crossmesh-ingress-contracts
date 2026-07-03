@@ -140,6 +140,64 @@ contract FlushTest is Base {
         revert("no Settled event");
     }
 
+    /// Decode ALL fields of the last Settled event (topics[1] is the indexed caller).
+    function _lastSettled()
+        internal
+        returns (
+            address caller,
+            uint256 settled,
+            uint256 setupFee,
+            uint256 perSettleFee,
+            uint256 burned,
+            bool viaSweep,
+            bool fast
+        )
+    {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("Settled(address,uint256,uint256,uint256,uint256,bool,bool)");
+        for (uint256 i = logs.length; i > 0; i--) {
+            Vm.Log memory entry = logs[i - 1];
+            if (entry.topics.length > 0 && entry.topics[0] == sig) {
+                caller = address(uint160(uint256(entry.topics[1])));
+                (settled, setupFee, perSettleFee, burned, viaSweep, fast) =
+                    abi.decode(entry.data, (uint256, uint256, uint256, uint256, bool, bool));
+                return (caller, settled, setupFee, perSettleFee, burned, viaSweep, fast);
+            }
+        }
+        revert("no Settled event");
+    }
+
+    /// The off-chain reconciliation contract: EVERY Settled field is exact on both paths — flush reports
+    /// the precise fee split (viaSweep=false); a sweep reports zero fees, burned == settled, viaSweep=true.
+    /// Balance-based tests would stay green if the emit ever mixed these up; this locks the event itself.
+    function test_settled_event_fields_flush_and_sweep() public {
+        address fwd = factory.deploy(_r(), 9, false);
+        usdc.mint(fwd, 100e6);
+        vm.recordLogs();
+        DepositForwarder(fwd).flush();
+        (address caller, uint256 settled, uint256 setupFee, uint256 perFee, uint256 burned, bool viaSweep, bool fast) =
+            _lastSettled();
+        require(caller == address(this), "flush: caller");
+        require(settled == 100e6, "flush: settled == full balance");
+        require(setupFee == SETUP, "flush: one-time setup fee");
+        require(perFee == BASE + _pct(100e6), "flush: base + proportional fee");
+        require(burned == 100e6 - SETUP - BASE - _pct(100e6), "flush: burned == settled - fees");
+        require(!viaSweep && !fast, "flush: viaSweep=false, standard");
+
+        usdc.mint(fwd, 50e6);
+        vm.prank(NON_OP);
+        DepositForwarder(fwd).requestSweep();
+        vm.warp(block.timestamp + DELAY + 1);
+        vm.recordLogs();
+        vm.prank(NON_OP);
+        DepositForwarder(fwd).sweep();
+        (caller, settled, setupFee, perFee, burned, viaSweep, fast) = _lastSettled();
+        require(caller == NON_OP, "sweep: caller");
+        require(settled == 50e6 && setupFee == 0 && perFee == 0, "sweep: fee-free");
+        require(burned == 50e6, "sweep: burned == settled");
+        require(viaSweep && !fast, "sweep: viaSweep=true, standard");
+    }
+
     /// Governance kill-switch: a fast address settles via STANDARD while fastEnabled is false (the default),
     /// so funds keep flowing if fast breaks (unsupported chain / fee spike) instead of stranding.
     function test_fast_disabled_settles_standard() public {
