@@ -155,7 +155,7 @@ contract DepositForwarder {
         uint256 balance = usdc.balanceOf(address(this));
         uint256 limit = _burnLimit();
         uint256 amount = balance > limit ? limit : balance;
-        _settle(amount, true);
+        _settle(usdc, amount, true);
         // If a sweep is pending, draw its armed budget down by what we settled — so flushing the armed funds
         // leaves no stale free-sweep allowance — and clear once that budget is spent or the balance is fully
         // drained. A partial flush that leaves both keeps the original window (can't reset the self-rescue clock).
@@ -216,7 +216,7 @@ contract DepositForwarder {
         uint256 limit = _burnLimit();
         uint256 amount = balance < sweepCap ? balance : sweepCap; // never beyond the armed snapshot
         if (amount > limit) amount = limit; // nor beyond one CCTP burn cap
-        _settle(amount, false);
+        _settle(usdc, amount, false);
         sweepCap -= amount;
         // Slither incorrect-equality: exact `== 0` sentinels — budget fully spent / balance fully drained;
         // closing the window early only re-requires {requestSweep}, it cannot strand funds.
@@ -268,14 +268,14 @@ contract DepositForwarder {
     /// @dev Settle `amount`: optionally collect fees, then burn the rest to the recipient via CCTP. Clearing
     ///      the escape countdown is left to the caller — {flush} and {sweep} each clear it once the armed
     ///      `sweepCap` budget is spent or the balance is fully drained.
+    /// @param usdc The USDC token (passed in by the caller, which already read it — avoids a re-read).
     /// @param amount Amount to settle (`0 < amount <= balance`).
     /// @param chargeFees Whether to collect fees. {flush} passes `true`; {sweep} passes `false` so the
     ///        escape hatch returns the FULL balance — the service takes nothing when it did not do the work.
     // Slither reentrancy-events: the burn goes to Circle's TokenMessenger (trusted); emitting {Settled}
     // after it means the event only fires for a burn that actually succeeded.
     // slither-disable-next-line reentrancy-events
-    function _settle(uint256 amount, bool chargeFees) internal {
-        IERC20 usdc = IERC20(config.usdc());
+    function _settle(IERC20 usdc, uint256 amount, bool chargeFees) internal {
         uint256 balance = usdc.balanceOf(address(this));
         require(amount > 0 && amount <= balance, "bad amount");
 
