@@ -3,3 +3,5 @@ cache/
 broadcast/
 internal/
 .idea/
+docs/*.pdf
+docs/slither-report.json
