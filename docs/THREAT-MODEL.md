@@ -1,5 +1,8 @@
 # Cross Mesh Ingress — Contracts: STRIDE Threat Model
 
+> The latest version of this document is maintained online at
+> [github.com/lightsail-network/crossmesh-ingress-contracts — docs/THREAT-MODEL.md](https://github.com/lightsail-network/crossmesh-ingress-contracts/blob/main/docs/THREAT-MODEL.md).
+
 ## Scope
 
 - **In scope (the audit target):** the EVM contracts in this repository (`src/`) — `Config`,
@@ -53,7 +56,7 @@ working as a public good with no operator (see DoS.1.R.2).
 | `Config` (process + data store)                            | One-time-init USDC path; owner-tunables clamped by immutable caps; operator list; factory pointer; fee/rescue destinations                                                                                                            |
 | USDC token (external process)                              | ERC-20 being bridged                                                                                                                                                                                                                  |
 | Circle `TokenMessengerV2` + attestation (external process) | Burns USDC, emits the cross-chain message                                                                                                                                                                                             |
-| Circle `CctpForwarder` on Stellar (external process)       | `mintRecipient`/`destinationCaller` of every burn; `mint_and_forward` mints and atomically forwards to the committed recipient in one non-custodial Soroban invocation. **Provided by Circle** as part of its Stellar CCTP deployment |
+| Circle `CctpForwarder` on Stellar (external process)       | `mintRecipient`/`destinationCaller` of every burn; mints and atomically forwards to the committed recipient (`mint_and_forward`). **Circle-provided** |
 
 ### Data flow diagram
 
@@ -131,6 +134,16 @@ Numbered flows (threats in §2 reference these):
 8. Side flow: stray native coin / non-USDC tokens are rescued, operator-gated, to the
    governance-set `rescueSink` (USDC is explicitly excluded from rescue).
 
+### Data entities
+
+| Entity | Where it lives | Integrity anchor |
+|---|---|---|
+| USDC principal | Deposit address → CCTP burn → Stellar mint (flows 2–7) | No entrypoint takes an amount or destination; it can only move to the committed recipient |
+| Recipient strkey + fast flag | CWIA immutable args; echoed in `hookData` (flows 1, 5) | Committed in the CREATE2 address; validated off-chain before issuance; verifiable via `recipient()` before funding |
+| Service fees | `flush` → `feeCollector` (flow 4) | Each component clamped by an immutable cap; `total < settled` enforced; full split published in `Settled` |
+| Config parameters | `Config` storage (flow 4) | USDC path is one-time `init`; tunables clamped by immutable caps; every change emits an event |
+| Stray native coin / non-USDC tokens | Deposit address → `rescueSink` (flow 8) | Operator-gated; destination governance-set and non-zero; USDC excluded from rescue |
+
 ### Trust boundaries
 
 | #   | Boundary                                           | Trust stance                                                                                                                                        |
@@ -139,8 +152,7 @@ Numbered flows (threats in §2 reference these):
 | TB2 | Anyone ↔ deposit address (flows 2, 3′)             | Permissionless by design; safe because no caller input chooses amount or destination                                                                |
 | TB3 | Operator/factory ↔ `flush` (flow 3)                | Semi-trusted: may _time_ settlements and charge _capped_ fees; cannot redirect                                                                      |
 | TB4 | Owner ↔ `Config` setters                           | Semi-trusted: bounded by immutable caps; cannot touch the USDC path after `init`                                                                    |
-| TB5 | EVM contracts ↔ Circle CCTP (flows 5–6)            | Trusted bridge dependency; pinned at `init`, burn-limit probed before every settlement                                                              |
-| TB6 | CCTP ↔ Circle `CctpForwarder` ↔ recipient (flow 7) | Same trust tier as TB5 — Circle-provided infrastructure; the hookData this repo emits matches Circle's published layout byte-for-byte (`_hookData`) |
+| TB5 | EVM contracts ↔ Circle CCTP (`TokenMessengerV2`, attestation, `CctpForwarder`) ↔ recipient (flows 5–7) | Trusted bridge dependency, pinned at `init`; the burn limit is probed before every settlement, and the hookData this repo emits matches Circle's published layout byte-for-byte (`_hookData`) |
 
 ---
 
@@ -321,8 +333,7 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   the operator to two-tx operation, nothing more.
 - **Elevation.3.R.1** — Owner worst case is bounded by the immutable caps: fees at their caps,
   delay at 7 days, swapped fee/rescue destinations, fast disabled, flush opened to everyone
-  (`publicFlush` — settlement access only; fees stay capped and the destination stays the
-  committed recipient in both states). The owner **cannot** redirect principal (USDC path immutable,
+  (`publicFlush` — settlement access only, DoS.9). The owner **cannot** redirect principal (USDC path immutable,
   recipient committed, sweep permissionless). Two-step ownership transfer (`transferOwnership` +
   `acceptOwnership`) prevents accidental loss; `transferOwnership(0)` cancels a pending transfer.
 - **Elevation.4.R.1** — `requestSweep` snapshots `sweepCap = balance` at arm time: the fee-free
@@ -355,9 +366,11 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   `test/CreateXFork.t.sol`). Static analysis (Slither 0.11.5) runs in CI under a zero-findings
   policy, with every intentional pattern suppressed inline next to a written justification, and
   `forge lint` covers sources, scripts and tests.
-- **Will we revisit?** This is a living document. It must be updated on: any redeploy (bytecode
-  changes move every deterministic address), enabling a new chain, a factory/implementation v2,
-  or changes to Circle's Stellar-side CCTP contracts (e.g. the `CctpForwarder` hookData layout).
+- **Will we revisit?** Yes — this is a living document. It is updated whenever the audited
+  contracts change (any modification under `src/`; the sections here that quote code rot
+  fastest), when a new chain is enabled, when Circle changes its CCTP contracts or the
+  `CctpForwarder` hookData layout, or when a new threat or incident challenges an assumption
+  recorded here.
 
 ---
 
