@@ -2,13 +2,11 @@
 pragma solidity 0.8.35;
 
 import {Base, Vm} from "./Base.t.sol";
-import {Config} from "../src/Config.sol";
-import {IDepositConfig} from "../src/interfaces.sol";
 import {DepositForwarder} from "../src/DepositForwarder.sol";
-import {DepositFactory} from "../src/DepositFactory.sol";
 
-/// Operator settlement (`flush`): full-balance settlement, the three service fees, the burn-limit cap, the
-/// CCTP fee rate, access control, and the interaction with a pending escape window.
+/// Operator settlement (`flush`): full-balance settlement, the three service fees, the burn-limit cap,
+/// access control, the Settled event, and the interaction with a pending escape window. What actually
+/// reaches Circle (finality, maxFee, hookData, call args) lives in CctpArgs.t.sol.
 contract FlushTest is Base {
     /// First settlement collects setup + base + amount×bps; burn(amount − fee) → recipient.
     function test_flush_collects_all_three_fees() public {
@@ -84,27 +82,6 @@ contract FlushTest is Base {
             ),
             "fee exceeds settled must revert"
         );
-    }
-
-    /// A STANDARD address (fast=false) settles at finality 2000 and pays the standard CCTP allowance
-    /// (0 by default -> maxFee 0).
-    function test_standard_address_uses_standard_finality() public {
-        usdc.mint(factory.computeAddress(_r(), 8, false), 100e6);
-        factory.deployAndFlush(_r(), 8, false);
-        require(tm.lastFinality() == 2000, "standard address -> finality 2000");
-        require(tm.lastMaxFee() == 0, "standard allowance defaults to 0");
-    }
-
-    /// A FAST address (fast=true) settles at finality 1000, and its maxFee scales with the FAST allowance:
-    /// maxFee = toBurn x cctpFastMaxFeeBps / 1e6 (independent of the standard allowance).
-    function test_fast_address_uses_fast_finality_and_fee() public {
-        config.setCctpFastMaxFeeBps(1400); // 0.14% — Circle's 14 bps x 100 (millionths)
-        config.setFastEnabled(true);
-        usdc.mint(factory.computeAddress(_r(), 8, true), 100e6);
-        factory.deployAndFlush(_r(), 8, true);
-        require(tm.lastFinality() == 1000, "fast address -> finality 1000");
-        uint256 toBurn = 100e6 - (SETUP + BASE + _pct(100e6));
-        require(tm.lastMaxFee() == (toBurn * 1400 + 1e6 - 1) / 1e6, "fast maxFee = ceil(toBurn x fastBps / 1e6)");
     }
 
     /// The Settled event reports the EFFECTIVE mode actually used (not just the address flag): a fast address
@@ -196,66 +173,6 @@ contract FlushTest is Base {
         require(settled == 50e6 && setupFee == 0 && perFee == 0, "sweep: fee-free");
         require(burned == 50e6, "sweep: burned == settled");
         require(viaSweep && !fast, "sweep: viaSweep=true, standard");
-    }
-
-    /// Governance kill-switch: a fast address settles via STANDARD while fastEnabled is false (the default),
-    /// so funds keep flowing if fast breaks (unsupported chain / fee spike) instead of stranding.
-    function test_fast_disabled_settles_standard() public {
-        config.setCctpFastMaxFeeBps(1400); // configured, but...
-        // fastEnabled left false (default)
-        usdc.mint(factory.computeAddress(_r(), 8, true), 100e6);
-        factory.deployAndFlush(_r(), 8, true);
-        require(tm.lastFinality() == 2000, "fast disabled -> standard finality");
-        require(tm.lastMaxFee() == 0, "fast disabled -> standard allowance (0), not the fast one");
-    }
-
-    /// A non-zero fast fee on a SMALL burn rounds the maxFee allowance UP to >= 1 subunit, matching CCTP's
-    /// 1-subunit minimum fee (a floored 0 would revert "Insufficient max fee" on-chain). Fresh fee-free
-    /// config so toBurn == balance.
-    function test_fast_maxfee_rounds_up_to_minimum() public {
-        Config c2 = new Config(address(this));
-        c2.init(address(usdc), address(tm), FORWARDER);
-        DepositForwarder impl2 = new DepositForwarder(IDepositConfig(address(c2)));
-        DepositFactory f2 = new DepositFactory(address(impl2));
-        c2.setOperator(address(this), true);
-        c2.setFactory(address(f2));
-        c2.setFeeCollector(FEE);
-        c2.setCctpFastMaxFeeBps(1); // 1 millionth → floors to 0 for any toBurn < 1e6
-        c2.setFastEnabled(true);
-
-        address addr = f2.computeAddress(_r(), 1, true); // fast
-        usdc.mint(addr, 100); // toBurn 100; 100 * 1 / 1e6 floors to 0 -> ceil 1
-        f2.deployAndFlush(_r(), 1, true);
-        require(tm.lastMaxFee() == 1, "non-zero fast fee on a small burn rounds up to >= 1");
-    }
-
-    /// CCTP requires maxFee < amount. A toBurn == 1 settlement with a non-zero allowance buffer would ceil to
-    /// maxFee == amount; clamp it below so a settlement still succeeds when Circle's ACTUAL fee is 0.
-    function test_maxfee_clamped_below_amount() public {
-        Config c2 = new Config(address(this));
-        c2.init(address(usdc), address(tm), FORWARDER);
-        DepositForwarder impl2 = new DepositForwarder(IDepositConfig(address(c2)));
-        DepositFactory f2 = new DepositFactory(address(impl2));
-        c2.setOperator(address(this), true);
-        c2.setFactory(address(f2));
-        c2.setFeeCollector(FEE);
-        c2.setCctpStandardMaxFeeBps(100); // non-zero standard buffer (Circle's actual standard fee is 0)
-
-        address addr = f2.computeAddress(_r(), 1, false); // standard, no service fee on c2
-        usdc.mint(addr, 1); // toBurn == 1
-        f2.deployAndFlush(_r(), 1, false);
-        require(tm.lastMaxFee() == 0, "maxFee clamped below amount for a 1-subunit settlement");
-    }
-
-    /// The same (recipient, index) yields DIFFERENT addresses for fast vs standard — one recipient can offer
-    /// both a fast and a standard deposit address, each with its mode committed in the clone's args.
-    function test_fast_and_standard_addresses_differ() public {
-        address std = factory.deploy(_r(), 8, false);
-        address fst = factory.deploy(_r(), 8, true);
-        require(std != fst, "fast and standard addresses must differ");
-        require(keccak256(DepositForwarder(std).recipient()) == keccak256(_r()), "std recipient intact");
-        require(keccak256(DepositForwarder(fst).recipient()) == keccak256(_r()), "fast recipient intact");
-        require(!DepositForwarder(std).fast() && DepositForwarder(fst).fast(), "fast flag committed per address");
     }
 
     /// flush is operator/factory-only.

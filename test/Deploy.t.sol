@@ -3,6 +3,7 @@ pragma solidity 0.8.35;
 
 import {Base} from "./Base.t.sol";
 import {DepositFactory} from "../src/DepositFactory.sol";
+import {DepositForwarder} from "../src/DepositForwarder.sol";
 
 /// Address derivation & counterfactual binding, deploy-time recipient/impl validation, and the
 /// no-hijack / no-initialize security invariants.
@@ -50,6 +51,17 @@ contract DeployTest is Base {
         address deployed = factory.deploy(weird, 0, false);
         require(deployed == predicted && deployed.code.length > 0, "arbitrary recipient must deploy at computeAddress");
         require(factory.isDeployed(weird, 0, false), "isDeployed agrees");
+    }
+
+    /// The same (recipient, index) yields DIFFERENT addresses for fast vs standard — one recipient can offer
+    /// both a fast and a standard deposit address, each with its mode committed in the clone's args.
+    function test_fast_and_standard_addresses_differ() public {
+        address std = factory.deploy(_r(), 8, false);
+        address fst = factory.deploy(_r(), 8, true);
+        require(std != fst, "fast and standard addresses must differ");
+        require(keccak256(DepositForwarder(std).recipient()) == keccak256(_r()), "std recipient intact");
+        require(keccak256(DepositForwarder(fst).recipient()) == keccak256(_r()), "fast recipient intact");
+        require(!DepositForwarder(std).fast() && DepositForwarder(fst).fast(), "fast flag committed per address");
     }
 
     /// The factory rejects a non-contract implementation (clones would silently delegatecall to nothing).
