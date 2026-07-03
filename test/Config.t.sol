@@ -132,4 +132,25 @@ contract ConfigTest is Base {
         );
         require(config.owner() == address(this), "owner unchanged");
     }
+
+    /// `setFactory(0)` revokes the relay: the factory's one-tx deployAndFlush stops passing the flush
+    /// gate (the kill switch documented on the setter), while direct operator settlement keeps working.
+    function test_set_factory_zero_revokes_relay() public {
+        usdc.mint(factory.computeAddress(_r(), 30, false), 100e6);
+        config.setFactory(address(0));
+
+        // the factory's own operator check passes (we are the operator) — the RELAY into flush must fail
+        require(
+            _reverts(
+                address(factory),
+                abi.encodeWithSignature("deployAndFlush(bytes,uint256,bool)", _r(), uint256(30), false)
+            ),
+            "revoked factory must no longer relay flush"
+        );
+
+        // funds are not stuck: the operator settles directly (deploy is permissionless)
+        address fwd = factory.deploy(_r(), 30, false);
+        DepositForwarder(fwd).flush();
+        require(usdc.balanceOf(fwd) == 0, "direct operator flush still works");
+    }
 }
