@@ -36,8 +36,9 @@ contract MockTokenMessenger {
         uint32 minFinalityThreshold,
         bytes calldata hookData
     ) external {
-        // Simulate the burn: pull the approved USDC out of the forwarder.
-        IERC20Min(burnToken).transferFrom(msg.sender, address(this), amount);
+        // Simulate the burn: pull the approved USDC out of the forwarder (checked, like the real messenger —
+        // a missing approval must fail the settlement loudly, not silently succeed).
+        require(IERC20Min(burnToken).transferFrom(msg.sender, address(this), amount), "burn transferFrom failed");
 
         lastAmount = amount;
         lastDomain = destinationDomain;
