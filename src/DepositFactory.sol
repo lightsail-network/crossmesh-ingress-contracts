@@ -90,7 +90,7 @@ contract DepositFactory {
     function deployAndFlush(bytes calldata recipient, uint256 index, bool fast) external returns (address forwarder) {
         forwarder = deploy(recipient, index, fast);
         IDepositConfig cfg = DepositForwarder(forwarder).config();
-        require(cfg.publicFlush() || cfg.isOperator(msg.sender), "not operator");
+        require(cfg.isOperator(msg.sender) || cfg.publicFlush(), "not operator"); // operator is the hot path
         DepositForwarder(forwarder).flush();
     }
 }
