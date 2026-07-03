@@ -115,4 +115,21 @@ contract ConfigTest is Base {
             "old owner locked out"
         );
     }
+
+    /// `transferOwnership(0)` cancels a pending transfer — the documented zero-as-cancel semantics, so a
+    /// proposed-then-regretted transfer can never be accepted later.
+    function test_transfer_ownership_zero_cancels() public {
+        config.transferOwnership(NON_OP);
+        require(config.pendingOwner() == NON_OP, "pending set");
+
+        config.transferOwnership(address(0));
+        require(config.pendingOwner() == address(0), "pending cancelled");
+
+        vm.prank(NON_OP);
+        require(
+            _reverts(address(config), abi.encodeWithSignature("acceptOwnership()")),
+            "a cancelled proposal must not be acceptable"
+        );
+        require(config.owner() == address(this), "owner unchanged");
+    }
 }
