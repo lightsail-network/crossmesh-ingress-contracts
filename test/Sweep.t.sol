@@ -14,6 +14,8 @@ contract SweepTest is Base {
 
         vm.prank(NON_OP);
         DepositForwarder(fwd).requestSweep();
+        // Test-side timestamp math only — asserts the arm-time snapshot; no validator-drift concern here.
+        // forge-lint: disable-next-line(block-timestamp)
         require(DepositForwarder(fwd).sweepableAt() == block.timestamp + DELAY, "snapshot");
 
         require(_reverts(fwd, abi.encodeWithSignature("sweep()")), "sweep before window must revert");
