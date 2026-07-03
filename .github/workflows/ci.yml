@@ -35,8 +35,8 @@ jobs:
           FORK_RPC: ${{ secrets.FORK_RPC || 'https://ethereum-rpc.publicnode.com' }}
         run: forge test --match-contract Fork -vv
 
-      - name: Lint (production sources)
-        run: forge lint src/ script/
+      - name: Lint
+        run: forge lint src/ script/ test/
 
   slither:
     name: slither
