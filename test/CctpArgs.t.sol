@@ -19,4 +19,19 @@ contract CctpArgsTest is Base {
         DepositForwarder(fwd).flush();
         require(keccak256(tm.lastHookData()) == keccak256(expected), "hookData on the wire");
     }
+
+    /// Every burn-call argument the forwarder controls: mintRecipient AND destinationCaller are both the
+    /// Stellar forwarder from Config (Circle's CctpForwarder, per its integration spec), the destination
+    /// domain is Stellar (27), the burn token is USDC, and the burn is initiated by the clone itself.
+    function test_cctp_burn_call_arguments() public {
+        address fwd = factory.deploy(_r(), 2, false);
+        usdc.mint(fwd, 100e6);
+        DepositForwarder(fwd).flush();
+
+        require(tm.lastMintRecipient() == FORWARDER, "mintRecipient must be the Stellar forwarder");
+        require(tm.lastDestinationCaller() == FORWARDER, "destinationCaller must be the Stellar forwarder");
+        require(tm.lastDomain() == 27, "destination domain must be Stellar (27)");
+        require(tm.lastBurnToken() == address(usdc), "burn token must be USDC");
+        require(tm.lastCaller() == fwd, "the clone itself must initiate the burn");
+    }
 }
