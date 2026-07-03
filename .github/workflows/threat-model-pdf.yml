@@ -10,7 +10,7 @@ jobs:
     name: render + upload
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.0
 
       # mermaid-cli replaces ```mermaid blocks with rendered SVGs. Point puppeteer at the runner's
       # preinstalled Chrome (no ~120MB chromium download); --no-sandbox is required on CI runners.
@@ -39,7 +39,7 @@ jobs:
           th,td{border:1px solid #ccc;padding:.45em .6em;text-align:left;vertical-align:top}
           th{background:#f0f0f0}
           img{max-width:100%}
-          tr,li,pre{page-break-inside:avoid}
+          tr{page-break-inside:avoid}
           h1,h2,h3{page-break-after:avoid}
           </style></head><body>
           EOF
@@ -53,7 +53,7 @@ jobs:
             --print-to-pdf=/tmp/THREAT-MODEL.pdf "file:///tmp/page.html"
 
       - name: Upload the PDF artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: threat-model-pdf
           path: /tmp/THREAT-MODEL.pdf
