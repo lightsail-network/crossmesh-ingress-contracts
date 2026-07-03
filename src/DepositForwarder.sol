@@ -12,8 +12,9 @@ import {ITokenMessengerV2, ITokenMinter, IDepositConfig} from "./interfaces.sol"
 ///         whose IMMUTABLE ARG is the Stellar `recipient`. The recipient is therefore committed in the
 ///         clone's CREATE2 address, and no key or admin path can redirect the principal.
 /// @dev Per-clone STORAGE is `sweepableAt` + `sweepCap` (escape hatch) and `setupFeePaid`. Two settlement
-///      entrypoints route through {_settle}: {flush} (operator/factory, charges fees) and {sweep}
-///      (permissionless escape hatch, after {requestSweep} + sweepDelay, fee-free). Neither takes a
+///      entrypoints route through {_settle}: {flush} (operator/factory — or anyone while
+///      `config.publicFlush()` — always charging the configured fees) and {sweep} (permissionless escape
+///      hatch, after {requestSweep} + sweepDelay, fee-free). Neither takes a
 ///      caller-chosen amount — {flush} settles `min(balance, burnLimit)` and {sweep} `min(balance, sweepCap,
 ///      burnLimit)` — and `burn(settled − fee)` goes to the committed recipient via CCTP. Only CLONES are
 ///      deposit addresses: never send USDC to the implementation itself (a non-clone has no immutable args,
@@ -54,7 +55,7 @@ contract DepositForwarder {
     /// @param setupFee One-time setup fee charged this settlement (0 if already paid, or fee-free sweep).
     /// @param perSettleFee Per-settlement fee — `baseFee + settled × feeBps` (0 on a fee-free sweep).
     /// @param burned Amount burned via CCTP to the recipient.
-    /// @param viaSweep True if this was the permissionless escape hatch ({sweep}); false for an operator {flush}.
+    /// @param viaSweep True if this was the permissionless escape hatch ({sweep}); false for a {flush}.
     /// @param fast True if this settlement actually used a CCTP fast transfer (finality 1000); false for
     ///        standard. Reflects the EFFECTIVE mode, not just the address flag: a sweep, or fast disabled on
     ///        the chain, settles standard even at a fast address.
@@ -134,8 +135,9 @@ contract DepositForwarder {
         maxFee = fee >= toBurn ? toBurn - 1 : fee;
     }
 
-    /// @notice Settle the balance (capped at CCTP's per-message burn limit) to the recipient.
-    ///         Operator/factory only; fees are collected.
+    /// @notice Settle the balance (capped at CCTP's per-message burn limit) to the recipient. Callable by
+    ///         the operator/factory — or by ANYONE while `config.publicFlush()` is on. The configured fees
+    ///         are collected either way (zero them for a fee-free public wind-down).
     /// @dev No caller-chosen amount — each call settles `min(balance, burnLimit)`, so the flat base fee
     ///      cannot be multiplied by splitting one balance into many small settlements. A balance above the
     ///      cap drains over successive flushes. A pending {sweep} has its armed budget (`sweepCap`) drawn
@@ -146,7 +148,7 @@ contract DepositForwarder {
     // (trusted, no untrusted callback); the post-call sweepCap drawdown is bounded by the armed snapshot.
     // slither-disable-next-line reentrancy-benign
     function flush() external {
-        require(config.isOperator(msg.sender) || msg.sender == config.factory(), "not operator");
+        require(config.publicFlush() || config.isOperator(msg.sender) || msg.sender == config.factory(), "not operator");
         IERC20 usdc = IERC20(config.usdc());
         uint256 balance = usdc.balanceOf(address(this));
         uint256 limit = _burnLimit();
