@@ -1,0 +1,60 @@
+name: Threat model PDF
+
+# Manually triggered: renders docs/THREAT-MODEL.md (mermaid included) to a PDF and uploads it as a
+# workflow artifact — download it from the run's "Artifacts" section on the Actions page.
+on:
+  workflow_dispatch:
+
+jobs:
+  pdf:
+    name: render + upload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # mermaid-cli replaces ```mermaid blocks with rendered SVGs. Point puppeteer at the runner's
+      # preinstalled Chrome (no ~120MB chromium download); --no-sandbox is required on CI runners.
+      - name: Render the mermaid diagram
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+        run: |
+          cat > /tmp/puppeteer.json <<'EOF'
+          {"executablePath": "/usr/bin/google-chrome", "args": ["--no-sandbox"]}
+          EOF
+          npx -y -p @mermaid-js/mermaid-cli mmdc -p /tmp/puppeteer.json \
+            -i docs/THREAT-MODEL.md -o /tmp/rendered.md --outputFormat svg
+
+      - name: Convert to styled HTML
+        run: |
+          npx -y marked --gfm -i /tmp/rendered.md -o /tmp/body.html
+          cat > /tmp/page.html <<'EOF'
+          <!doctype html><html><head><meta charset="utf-8"><style>
+          body{font:11pt/1.55 -apple-system,'Helvetica Neue',Arial,sans-serif;color:#1a1a1a;max-width:52em;margin:0 auto;padding:2em 1em}
+          h1{font-size:1.7em;border-bottom:2px solid #ddd;padding-bottom:.3em}
+          h2{font-size:1.3em;border-bottom:1px solid #eee;padding-bottom:.2em;margin-top:1.8em}
+          h3{font-size:1.1em;margin-top:1.4em}
+          code{font:.9em ui-monospace,'SF Mono',Menlo,monospace;background:#f4f4f4;padding:.1em .3em;border-radius:3px}
+          pre code{display:block;padding:.8em;overflow-x:auto}
+          table{border-collapse:collapse;width:100%;margin:.8em 0;font-size:.92em}
+          th,td{border:1px solid #ccc;padding:.45em .6em;text-align:left;vertical-align:top}
+          th{background:#f0f0f0}
+          img{max-width:100%}
+          tr,li,pre{page-break-inside:avoid}
+          h1,h2,h3{page-break-after:avoid}
+          </style></head><body>
+          EOF
+          cat /tmp/body.html >> /tmp/page.html
+          echo "</body></html>" >> /tmp/page.html
+
+      - name: Print to PDF
+        run: |
+          google-chrome --headless=new --disable-gpu --no-sandbox \
+            --no-pdf-header-footer \
+            --print-to-pdf=/tmp/THREAT-MODEL.pdf "file:///tmp/page.html"
+
+      - name: Upload the PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: threat-model-pdf
+          path: /tmp/THREAT-MODEL.pdf
+          if-no-files-found: error
