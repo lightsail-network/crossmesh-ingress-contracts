@@ -148,7 +148,9 @@ contract DepositForwarder {
     // (trusted, no untrusted callback); the post-call sweepCap drawdown is bounded by the armed snapshot.
     // slither-disable-next-line reentrancy-benign
     function flush() external {
-        require(config.publicFlush() || config.isOperator(msg.sender) || msg.sender == config.factory(), "not operator");
+        // Gate order = call frequency: direct operator flush, factory relay, then the public switch — so
+        // the hot paths short-circuit without paying the extra staticcall.
+        require(config.isOperator(msg.sender) || msg.sender == config.factory() || config.publicFlush(), "not operator");
         IERC20 usdc = IERC20(config.usdc());
         uint256 balance = usdc.balanceOf(address(this));
         uint256 limit = _burnLimit();
