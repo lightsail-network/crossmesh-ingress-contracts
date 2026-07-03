@@ -1,0 +1,375 @@
+# Cross Mesh Ingress — Contracts: STRIDE Threat Model
+
+## Scope
+
+- **In scope (the audit target):** the EVM contracts in this repository (`src/`) — `Config`,
+  `DepositForwarder` (the CWIA implementation behind every deposit address), and
+  `DepositFactory` — as built by the toolchain pinned in `foundry.toml` (Appendix A).
+- **Out of scope, modeled as adversarial or as a trusted dependency:** the integrator
+  backend and operator/owner key custody (modeled as adversarial), and Circle's CCTP
+  infrastructure on both sides — including the Stellar-side `CctpForwarder` that executes the
+  final hop, which is **provided by Circle** as part of its CCTP deployment
+  ([reference](https://developers.circle.com/cctp/references/stellar)). They appear throughout
+  this model as _external entities and trust boundaries_; the property the model demonstrates is
+  that the in-scope contracts bound the damage any of them can cause. No other first-party code
+  exists on the fund path: this repository is the entirety of the team-owned on-chain surface.
+
+---
+
+## 1. What are we working on?
+
+A depositor sends USDC on an EVM chain to a **counterfactual CREATE2 address** whose only
+fund-moving behavior is to bridge its balance, via Circle CCTP V2, to one fixed Stellar recipient.
+The recipient (a Stellar strkey, plus a 1-byte fast/standard flag) is a
+**clones-with-immutable-args (CWIA) immutable argument**, so it is committed inside the address
+itself: no key, admin, or upgrade path can redirect the principal — before _or_ after deployment.
+
+Two settlement entrypoints, both flowing through internal `_settle`, **neither taking a
+caller-chosen amount or destination**:
+
+- `flush()` — operator/factory only; settles `min(balance, cctpBurnLimit)`; charges the service
+  fees (one-time `setupFee` + `baseFee` + `settled × feeBps`, each clamped by an immutable cap).
+- `sweep()` — the permissionless escape hatch: anyone may `requestSweep()` (balance > 0), and
+  after `sweepDelay` (≤ immutable `maxSweepDelay` = 7 days) anyone may `sweep()` **fee-free**,
+  settling `min(balance, sweepCap, cctpBurnLimit)` to the same committed recipient. Sweeps always
+  use CCTP _standard_ finality, so no fast-mode configuration can strand self-rescue.
+
+A governance **access switch** (`Config.publicFlush`) opens `flush` — and the factory's one-tx
+`deployAndFlush` — to everyone; the fee schedule still applies and is configured independently.
+Combined with zeroed fees this is the planned wind-down mode, under which the contracts keep
+working as a public good with no operator (see DoS.1.R.2).
+
+### Components
+
+| Element (DFD type)                                         | Role                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Depositor wallet (external entity)                         | Sends USDC; may also drive the escape hatch                                                                                                                                                                                           |
+| Integrator backend (external entity)                       | Derives & distributes deposit addresses; validates strkeys; **untrusted for principal**                                                                                                                                               |
+| Operator hot keys (external entity)                        | Allow-listed settlement triggers (`flush`)                                                                                                                                                                                            |
+| Owner (external entity)                                    | Governance over `Config`, bounded by immutable caps; two-step transfer                                                                                                                                                                |
+| `DepositFactory` (process)                                 | Deterministic clone deployment (`deploy`, permissionless) + operator one-tx `deployAndFlush`                                                                                                                                          |
+| Deposit address — CWIA clone (process + data store)        | Holds transient USDC; storage is only `sweepableAt`, `sweepCap`, `setupFeePaid`                                                                                                                                                       |
+| `DepositForwarder` implementation (process)                | Settlement logic every clone delegates to                                                                                                                                                                                             |
+| `Config` (process + data store)                            | One-time-init USDC path; owner-tunables clamped by immutable caps; operator list; factory pointer; fee/rescue destinations                                                                                                            |
+| USDC token (external process)                              | ERC-20 being bridged                                                                                                                                                                                                                  |
+| Circle `TokenMessengerV2` + attestation (external process) | Burns USDC, emits the cross-chain message                                                                                                                                                                                             |
+| Circle `CctpForwarder` on Stellar (external process)       | `mintRecipient`/`destinationCaller` of every burn; `mint_and_forward` mints and atomically forwards to the committed recipient in one non-custodial Soroban invocation. **Provided by Circle** as part of its Stellar CCTP deployment |
+
+### Data flow diagram
+
+```mermaid
+flowchart TB
+    subgraph Z2["Zone B — Integrator backend (UNTRUSTED for principal)"]
+        BE["Integrator backend\naddress distribution + strkey validation"]
+    end
+    subgraph Z1["Zone A — Depositor (untrusted)"]
+        U["Depositor EVM wallet"]
+    end
+    subgraph Z4["Zone D — Governance keys (bounded by immutable caps)"]
+        OP["Operator hot keys (allow-list)"]
+        OWN["Owner (two-step transfer)"]
+    end
+    subgraph Z3["Zone C — AUDIT SCOPE (this repository, EVM chain)"]
+        F(["DepositFactory"])
+        D(["Deposit address — CWIA clone\nstore: sweepableAt, sweepCap, setupFeePaid"])
+        C(["Config\nstore: USDC path, fees, operators, factory, sinks"])
+    end
+    subgraph Z5["Zone E — Circle CCTP (trusted dependency)"]
+        USDC[(USDC token)]
+        TM(["TokenMessengerV2"])
+        ATT(["Attestation service"])
+        SF(["CctpForwarder on Stellar\n(mintRecipient + destinationCaller)"])
+    end
+    R["Final Stellar recipient\n(user's account)"]
+
+    BE <-. "1- derive offline; MUST\ncross-verify (computeAddress)" .-> F
+    BE -- "1- deposit address for\n(recipient, index, fast)" --> U
+    U -- "2- USDC transfer" --> D
+    OP -- "3- deployAndFlush / flush" --> F
+    OP -. "8- rescue non-USDC\nstrays to sink" .-> D
+    F -- "3- deploy + relay flush" --> D
+    U -. "3'- requestSweep, then\nfee-free sweep" .-> D
+    D -- "4- read fees, operators,\nfactory, CCTP params" --> C
+    OWN -- "setters, clamped by\nimmutable caps" --> C
+    D -- "4- capped fees\nto feeCollector" --> USDC
+    D -- "5- approve + depositForBurnWithHook\n(toBurn, hookData = framed recipient)" --> TM
+    TM -- "5- burn" --> USDC
+    TM -- "6- message + hookData" --> ATT
+    ATT -- "6- attestation" --> SF
+    SF -- "7- mint_and_forward USDC\n(non-custodial, one invocation)" --> R
+
+    style Z3 fill:#e8f1fb,stroke:#2b6cb0,stroke-width:2.5px
+    style Z1 fill:#fdf0ee,stroke:#c05621
+    style Z2 fill:#fdf0ee,stroke:#c05621
+    style Z4 fill:#fdf6e3,stroke:#b7791f
+    style Z5 fill:#eef7ee,stroke:#276749
+    style R fill:#ffffff,stroke:#333
+```
+
+Zone colors encode the trust stance: **blue = the audited contracts**, red = adversarial actors,
+amber = governance keys (bounded by immutable caps), green = the trusted Circle dependency. The
+final recipient deliberately sits outside every zone: it is the user's own Stellar account —
+past the system's trust surface, delivery there is the end state this model protects.
+
+Numbered flows (threats in §2 reference these):
+
+1. The integrator derives the deposit address for `(recipient, index, fast)` off-chain and
+   **cross-verifies it against the on-chain `factory.computeAddress`**, then hands it to the
+   depositor.
+2. The depositor sends USDC to the address — which may not be deployed yet (counterfactual).
+3. The operator settles via `factory.deployAndFlush` (deploy if needed, then `flush`).
+   **3′ (escape hatch):** if the operator never does, anyone — typically the depositor — calls
+   `requestSweep()` and, after the delay, `sweep()`.
+4. Settlement reads `Config` (fees, CCTP params) and, on the `flush` path only, transfers the
+   capped fees to `feeCollector`.
+5. The clone approves `TokenMessengerV2` and calls `depositForBurnWithHook`, burning
+   `settled − fees` with `hookData` framing the committed recipient.
+6. Circle's attestation service observes the burn and attests the message.
+7. Circle's `CctpForwarder` on Stellar receives the message plus hookData and, in a single
+   non-custodial invocation (`mint_and_forward`), mints and forwards USDC to the committed
+   recipient.
+8. Side flow: stray native coin / non-USDC tokens are rescued, operator-gated, to the
+   governance-set `rescueSink` (USDC is explicitly excluded from rescue).
+
+### Trust boundaries
+
+| #   | Boundary                                           | Trust stance                                                                                                                                        |
+| --- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TB1 | Depositor ↔ integrator (flow 1)                    | **Untrusted.** A lying address distributor is the one path to principal loss (Spoof.1)                                                              |
+| TB2 | Anyone ↔ deposit address (flows 2, 3′)             | Permissionless by design; safe because no caller input chooses amount or destination                                                                |
+| TB3 | Operator/factory ↔ `flush` (flow 3)                | Semi-trusted: may _time_ settlements and charge _capped_ fees; cannot redirect                                                                      |
+| TB4 | Owner ↔ `Config` setters                           | Semi-trusted: bounded by immutable caps; cannot touch the USDC path after `init`                                                                    |
+| TB5 | EVM contracts ↔ Circle CCTP (flows 5–6)            | Trusted bridge dependency; pinned at `init`, burn-limit probed before every settlement                                                              |
+| TB6 | CCTP ↔ Circle `CctpForwarder` ↔ recipient (flow 7) | Same trust tier as TB5 — Circle-provided infrastructure; the hookData this repo emits matches Circle's published layout byte-for-byte (`_hookData`) |
+
+---
+
+## 2. What can go wrong?
+
+STRIDE applied per flow. IDs below are referenced by the remediations in §3.
+
+### Spoofing
+
+| ID      | Threat (flow)                                                                                                                                              |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Spoof.1 | A compromised/hostile distributor hands the depositor an address committed to the **attacker's** recipient; deposits to it bridge to the attacker (flow 1) |
+| Spoof.2 | A non-operator calls `flush` to force settlements (flow 3)                                                                                                 |
+| Spoof.3 | An attacker "front-runs" or pre-deploys the clone for a victim's recipient to hijack it (flow 3)                                                           |
+| Spoof.4 | The burn message is directed to a spoofed destination on Stellar (flows 5–7)                                                                               |
+
+### Tampering
+
+| ID       | Threat (flow)                                                                                         |
+| -------- | ----------------------------------------------------------------------------------------------------- |
+| Tamper.1 | Change a deposit address's recipient after it was issued (flows 1–7)                                  |
+| Tamper.2 | Repoint the USDC path (`usdc` / `tokenMessenger` / `stellarForwarder`) to attacker contracts (flow 4) |
+| Tamper.3 | Raise fees or the sweep delay beyond the worst case depositors verified (flow 4)                      |
+| Tamper.4 | Corrupt the `hookData` so funds route to a different Stellar account (flow 5)                         |
+
+### Repudiation
+
+| ID          | Threat (flow)                                                                                      |
+| ----------- | -------------------------------------------------------------------------------------------------- |
+| Repudiate.1 | The operator over-charges and the fee accounting cannot be disputed/reconciled (flow 4)            |
+| Repudiate.2 | A dispute over whether/where a deposit was settled cannot be resolved from public data (flows 5–7) |
+
+### Information disclosure
+
+| ID     | Threat (flow)                                                                                                         |
+| ------ | --------------------------------------------------------------------------------------------------------------------- |
+| Info.1 | The recipient-strkey ↔ deposit-address linkage is publicly enumerable (args, events), deanonymizing users (flows 1–2) |
+
+### Denial of service
+
+| ID    | Threat (flow)                                                                                                                                                              |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DoS.1 | The operator goes offline (or is shut down) and never settles (flow 3)                                                                                                     |
+| DoS.2 | The operator griefs the self-rescue countdown by strategically partial-flushing (flows 3, 3′)                                                                              |
+| DoS.3 | Dust below the fee floor can never be settled by `flush` (flow 4)                                                                                                          |
+| DoS.4 | Fast-mode misconfiguration or a Circle fast-fee spike strands settlements (flow 5)                                                                                         |
+| DoS.5 | Circle stops supporting the chain/token (burn limit 0, messenger retired) (flow 5)                                                                                         |
+| DoS.6 | A balance above the CCTP per-message burn cap cannot be settled (flow 5)                                                                                                   |
+| DoS.7 | `requestSweep` spam re-arms or extends windows to block operator settlement (flow 3′)                                                                                      |
+| DoS.8 | A malformed or unroutable recipient strkey is committed at address creation; the burn succeeds but the Stellar-side forward cannot complete (flows 1, 7)                   |
+| DoS.9 | While `publicFlush` is enabled with a non-zero fee schedule, anonymous callers can force per-deposit settlements, multiplying the base fees charged to depositors (flow 3) |
+
+### Elevation of privilege
+
+| ID          | Threat (flow)                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------- |
+| Elevation.1 | A compromised operator hot key abuses `flush` (flow 3)                                                              |
+| Elevation.2 | The owner points `config.factory` at a hostile contract, which then holds flush rights (flow 3)                     |
+| Elevation.3 | A compromised owner key abuses the `Config` setters (flow 4)                                                        |
+| Elevation.4 | Fee evasion: pre-arm a sweep window with dust, then route real deposits through the fee-free `sweep` path (flow 3′) |
+
+---
+
+## 3. What are we going to do about it?
+
+Every treatment below is **implemented and tested** unless marked _risk accepted_.
+
+### Spoofing
+
+- **Spoof.1.R.1** — A deposit address is pure CREATE2 math over public inputs — the factory and
+  implementation addresses plus the clone's immutable args (`recipient ++ fast`, salt
+  `keccak256(recipient, index)`) — so anyone can recompute it fully **offline**, with no RPC and
+  no trust in any service. The contracts additionally expose `computeAddress(recipient, index,
+fast)` and `isDeployed` as the on-chain reference implementation. **Third-party integrators
+  MUST cross-verify every address they hand out** — the offline derivation and the on-chain
+  factory must agree. The reference backend asserts identical derivation vectors on both paths
+  (`test/CwiaVector.t.sol`).
+- **Spoof.1.R.2** — A depositor can verify before funding: recompute the address, or call
+  `recipient()` on the deployed clone to read the committed strkey.
+- **Spoof.1.R.3** — _Risk accepted (residual):_ on-chain code cannot detect a poisoned address —
+  it is a _valid_ deposit address, just not the user's. Correctly-derived addresses that were
+  already issued are unaffected by any later distributor compromise.
+- **Spoof.2.R.1** — `flush` requires `config.isOperator(msg.sender) || msg.sender ==
+config.factory() || config.publicFlush()` — the third branch is the governance access switch
+  that deliberately opens the gate to everyone during a wind-down (DoS.1.R.2, DoS.9). Whether
+  spoofed or legitimately open, a call can only trigger a settlement to the committed recipient
+  at the configured, capped fees (see Elevation.1).
+- **Spoof.3.R.1** — Deployment is permissionless _and harmless_: identical `(recipient, index,
+fast)` produce the identical address and behavior; there is no initializer, so nothing can be
+  front-run, and `salt = keccak256(recipient, index)` cannot be hijacked for foreign args.
+- **Spoof.4.R.1** — `mintRecipient` **and** `destinationCaller` of every burn are both Circle's
+  `CctpForwarder` fixed in `Config` at one-time `init` (exactly as Circle's integration spec
+  prescribes); no per-call destination input exists.
+
+### Tampering
+
+- **Tamper.1.R.1** — The recipient is a CWIA immutable argument committed in the CREATE2 address;
+  clones have no setters, no initializer, and no upgrade path. Changing the recipient means a
+  _different address_.
+- **Tamper.2.R.1** — The USDC path is a one-time `init` latch (owner-only, zero-checked,
+  `initialized` flag); immutable thereafter. Governing rule documented in `Config`: only values
+  that provably cannot redirect USDC may be mutable.
+- **Tamper.3.R.1** — Immutable caps clamp every tunable: `maxSetupFee`/`maxBaseFee` 100 USDC,
+  `maxFeeBps` 1%, `maxSweepDelay` 7 days, `maxCctpFeeBps` 1%. A depositor can verify the worst
+  case on-chain before funding.
+- **Tamper.4.R.1** — `hookData` is built on-chain (`_hookData`) from the committed immutable args
+  with a fixed 32-byte frame matching Circle's published hookData layout byte-for-byte; no
+  external input reaches it.
+
+### Repudiation
+
+- **Repudiate.1.R.1** — `Settled` publishes the full split — `settled`, `setupFee`,
+  `perSettleFee`, `burned`, `viaSweep`, and the _effective_ fast mode — for off-chain
+  reconciliation; every `Config` setter emits an event.
+- **Repudiate.2.R.1** — `Deployed`, `SweepRequested`, `Rescued*` events plus the CCTP message
+  itself are public; the deterministic address derivation lets anyone re-prove the
+  recipient-address binding after the fact.
+
+### Information disclosure
+
+- **Info.1.R.1** — _Risk accepted (by design):_ the commitment scheme is intentionally public —
+  transparency is what lets depositors verify addresses (Spoof.1.R.2). No secrets exist in
+  contract state; privacy-sensitive integrators must handle recipient linkage off-chain.
+
+### Denial of service
+
+- **DoS.1.R.1** — Permissionless, fee-free escape hatch: `requestSweep()` + `sweep()`, with the
+  delay capped by the immutable `maxSweepDelay = 7 days`. Operator absence delays funds, never
+  strands them.
+- **DoS.1.R.2** — For a _deliberate_ wind-down, governance flips `Config.publicFlush` (opening
+  `flush` and the factory's one-tx `deployAndFlush` to everyone) and zeroes the fee schedule —
+  each knob single-purpose — so anyone settles any address in a single tx with no `requestSweep`
+  wait. The switch cannot redirect USDC in either state — settlement always pays the committed
+  recipient — and the sweep path (R.1) remains available regardless.
+- **DoS.2.R.1** — A partial `flush` cannot reset an armed window; the window closes only when the
+  armed `sweepCap` budget is spent or the balance is drained — and both outcomes deliver funds to
+  the committed recipient.
+- **DoS.3.R.1** — `flush` reverts when fees would consume the settlement (`fee exceeds settled`),
+  but `sweep` is fee-free and clamps CCTP `maxFee < toBurn`, so self-rescue works down to
+  1 subunit.
+- **DoS.4.R.1** — Effective fast mode requires _flush ∧ address-committed-fast ∧ `fastEnabled`_;
+  `sweep` always settles via standard finality; `fastEnabled` doubles as a chain-level kill
+  switch. A fast address can never be stranded by fast-fee configuration.
+- **DoS.5.R.1** — `_burnLimit` probes `burnLimitsPerMessage` and reverts early
+  (`burn unsupported`) instead of burning into a dead bridge.
+- **DoS.5.R.2** — _Risk accepted (deliberate trade-off):_ if Circle permanently retired the
+  pinned `TokenMessengerV2`, `flush` and `sweep` would both revert and USDC would sit in deposit
+  addresses. The _absence_ of any admin USDC-recovery path is what makes the design rug-proof;
+  operational mitigation is monitoring Circle deprecation notices per chain.
+- **DoS.6.R.1** — Settlement takes `min(balance, burnLimit)` per call and drains an above-cap
+  balance over successive calls; the sweep window stays open across partial settlements with no
+  fresh cooldown.
+- **DoS.7.R.1** — `requestSweep` requires `balance > 0` (no pre-arming empty addresses) and is
+  idempotent while armed (cannot extend an existing window); arming never blocks `flush` — after
+  the delay, settlement is a fair race that either way pays the committed recipient.
+- **DoS.8.R.1** — `deploy` commits the strkey bytes as-is by design (documented on `deploy`);
+  the backend's full strkey validation (base32 + checksum) is the prescribed gate before any address
+  is handed out, so a malformed recipient never reaches a depositor through the reference flow.
+- **DoS.8.R.2** — The commitment is verifiable _before funding_: recompute the address off-chain
+  or read `recipient()` on the deployed clone — a validation failure is catchable while zero
+  USDC has moved.
+- **DoS.8.R.3** — _Risk accepted (residual):_ delivery for a well-formed but unroutable
+  recipient follows the semantics of Circle's `CctpForwarder`, outside this repo's scope.
+- **DoS.9.R.1** — The switch grants only operator-equivalent power: the operator could already
+  settle per-deposit and charge the same fees, so no new trust tier appears; every fee stays
+  clamped by the immutable caps, and settlement still pays the committed recipient.
+- **DoS.9.R.2** — _Risk accepted (documented):_ `publicFlush` is designed to be flipped together
+  with a zeroed fee schedule — the wind-down runbook of DoS.1.R.2 — and its setter documents the
+  pairing; it is not intended to be enabled with fees still configured.
+
+### Elevation of privilege
+
+- **Elevation.1.R.1** — Operator worst case is _bounded, not prevented_: trigger settlements at
+  capped fees and choose their timing. No amount, destination, or principal access. Keys are
+  revocable per-address via `setOperator`.
+- **Elevation.2.R.1** — The factory pointer only gates `flush`, so a hostile value is exactly
+  operator-tier (Elevation.1). `setFactory(0)` is the revoke/kill switch; a wrong value degrades
+  the operator to two-tx operation, nothing more.
+- **Elevation.3.R.1** — Owner worst case is bounded by the immutable caps: fees at their caps,
+  delay at 7 days, swapped fee/rescue destinations, fast disabled, flush opened to everyone
+  (`publicFlush` — settlement access only; fees stay capped and the destination stays the
+  committed recipient in both states). The owner **cannot** redirect principal (USDC path immutable,
+  recipient committed, sweep permissionless). Two-step ownership transfer (`transferOwnership` +
+  `acceptOwnership`) prevents accidental loss; `transferOwnership(0)` cancels a pending transfer.
+- **Elevation.4.R.1** — `requestSweep` snapshots `sweepCap = balance` at arm time: the fee-free
+  window only ever covers funds present _when armed_; deposits arriving later need a fresh
+  request (a fresh delay), and `flush` draws the armed budget down as it settles.
+
+---
+
+## 4. Did we do a good job?
+
+- **Is the diagram used?** Yes — the flow above _is_ the design: the sweep-budget snapshot
+  (Elevation.4), the fee-free/standard-only sweep (DoS.1/DoS.4), and the operator-tier factory
+  trust (Elevation.2) were all decisions made against this data flow, and the implementation
+  matches it one-to-one.
+- **Did STRIDE surface anything new?** Yes. Working through this model during pre-audit
+  hardening produced concrete changes: a zero-address guard on `setRescueSink` (a sink is a
+  destination, never revocable trust), checks-effects-interactions event ordering in
+  `rescueNative`, and the explicit documentation of the address-distribution boundary (Spoof.1)
+  as the system's one residual principal risk — with integrator cross-verification prescribed as
+  its mitigation.
+- **Are the treatments adequate?** Every implemented mitigation is exercised by the test suite:
+  60 unit tests across the Deploy / Flush / Sweep / Rescue / Config / PublicFlush suites,
+  including a dedicated **wire-contract suite** (`test/CctpArgs.t.sol`) that byte-locks the
+  hookData layout and every burn-call argument handed to Circle, an event-contract test locking
+  every `Settled` field on both settlement paths, and **fuzzed property tests**
+  (`test/Fuzz.t.sol`, 256 runs each) for the three core invariants: fees are conserved and
+  strictly below the settlement, the CCTP `maxFee` stays strictly below the burn amount, and a
+  sweep never exceeds its armed snapshot. Integration tests execute in CI against the **real
+  CCTP V2 TokenMessenger and CreateX on an Ethereum mainnet fork** (`test/Fork.t.sol`,
+  `test/CreateXFork.t.sol`). Static analysis (Slither 0.11.5) runs in CI under a zero-findings
+  policy, with every intentional pattern suppressed inline next to a written justification, and
+  `forge lint` covers sources, scripts and tests.
+- **Will we revisit?** This is a living document. It must be updated on: any redeploy (bytecode
+  changes move every deterministic address), enabling a new chain, a factory/implementation v2,
+  or changes to Circle's Stellar-side CCTP contracts (e.g. the `CctpForwarder` hookData layout).
+
+---
+
+## Appendix A — Key management & deployment
+
+- **Owner:** a single governance key, identical on every chain — it is baked into `Config`'s
+  init code, the anchor of the deterministic cross-chain address scheme (deployed via CreateX).
+  Its custody is deliberately NOT part of the security model: the immutable caps bound even a
+  fully compromised owner (Elevation.3), which is what lets depositors verify the worst case
+  without trusting any key-management claim.
+- **Operators:** hot keys on an allow-list sized for throughput; grant/revoke via `setOperator`
+  with no redeploy.
+- **Determinism:** `solc 0.8.35`, `evm_version = shanghai`, optimizer 200 runs, metadata hash
+  stripped (`bytecode_hash = "none"`, `cbor_metadata = false`) so addresses depend only on actual
+  code; the same stack deploys to identical addresses on every target chain.
