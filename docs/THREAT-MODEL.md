@@ -377,8 +377,20 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   extra `sweepDelay` (≤ 7 days) and one transaction; the armed sweep pays the committed recipient,
   `flush` is unaffected, and no value is at risk.
 - **DoS.8.R.1** — `deploy` commits the strkey bytes as-is by design (documented on `deploy`);
-  the backend's full strkey validation (base32 + checksum) is the prescribed gate before any address
-  is handed out, so a malformed recipient never reaches a depositor through the reference flow.
+  full strkey validation in the address producers — Cross Mesh's backend, which derives and
+  issues addresses to integrators over its API, and the open-source SDK with which integrators
+  re-derive them offline — is the prescribed gate before any address is handed out, so
+  a malformed recipient never reaches a depositor through the reference flow. The rules
+  those producers must enforce, mirroring the Stellar `CctpForwarder`: length 56 (`G`/`C`) or 69
+  (`M`), the RFC 4648 base32 alphabet with zero padding bits, a matching version byte, a valid
+  CRC16-XMODEM checksum, and for a `C` key rejection of the `CctpForwarder` and USDC contract IDs
+  themselves. _Risk accepted:_ on-chain validation in `DepositFactory._args` was considered and
+  rejected. A reverting `deploy` would leave USDC already sent to that address stuck at an
+  address that can never receive code (no clone, so no `rescueERC20` either) — it changes the
+  failure mode, not the loss; the acceptance rules belong to the Stellar forwarder and may
+  evolve, which an immutable factory cannot follow (it would then refuse valid keys, or admit
+  new invalid ones, permanently); it would move every deposit address; and it costs ≈30k gas per
+  `deploy` (≈90k today) even table-driven.
 - **DoS.8.R.2** — The commitment is verifiable _before funding_: recompute the address off-chain
   or read `recipient()` on the deployed clone — a validation failure is catchable while zero
   USDC has moved.
