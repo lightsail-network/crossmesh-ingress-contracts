@@ -206,7 +206,7 @@ STRIDE applied per flow. IDs below are referenced by the remediations in §3.
 | DoS.2 | The operator griefs the self-rescue countdown by strategically partial-flushing (flows 3, 3′)                                                                              |
 | DoS.3 | Dust below the fee floor can never be settled by `flush` (flow 4)                                                                                                          |
 | DoS.4 | Fast-mode misconfiguration or a Circle fast-fee spike strands settlements (flow 5)                                                                                         |
-| DoS.5 | Circle stops supporting the chain/token (burn limit 0, messenger retired) (flow 5)                                                                                         |
+| DoS.5 | Circle stops supporting the chain/token (burn limit 0, messenger retired) or denylists a deposit address as a CCTP caller (flow 5)                                        |
 | DoS.6 | A balance above the CCTP per-message burn cap cannot be settled (flow 5)                                                                                                   |
 | DoS.7 | `requestSweep` spam re-arms or extends windows to block operator settlement (flow 3′)                                                                                      |
 | DoS.8 | A malformed or unroutable recipient strkey is committed at address creation; the burn succeeds but the Stellar-side forward cannot complete (flows 1, 7)                   |
@@ -311,6 +311,12 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   pinned `TokenMessengerV2`, `flush` and `sweep` would both revert and USDC would sit in deposit
   addresses. The _absence_ of any admin USDC-recovery path is what makes the design rug-proof;
   operational mitigation is monitoring Circle deprecation notices per chain.
+- **DoS.5.R.3** — _Risk accepted (same trade-off):_ `TokenMessengerV2` enforces a caller
+  denylist, and every settlement calls it with the deposit address as `msg.sender`. If Circle
+  denylists a deposit address, `flush` and `sweep` both revert and the USDC stays there until
+  Circle removes the entry — there is no other exit, and adding an owner-controlled one would
+  give up the "owner cannot redirect principal" property (Elevation.3.R.1). Operational
+  mitigation is monitoring Circle's denylist for deposit addresses.
 - **DoS.6.R.1** — Settlement takes `min(balance, burnLimit)` per call and drains an above-cap
   balance over successive calls; the sweep window stays open across partial settlements with no
   fresh cooldown.
