@@ -355,7 +355,14 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   would not honor; it governs future burns only and is not a guard against a revert. Note: Circle's
   fee page also says the burn "will revert on the source blockchain" when the fee exceeds `maxFee`;
   the deployed code (Ethereum, Base, Arc, verified) has no such check — the code governs here.
-  The standard path needs no owner-set allowance either (DoS.1.R.1).
+  The standard path needs no owner-set allowance either (DoS.1.R.1). _Risk accepted:_
+  `setFastEnabled` and `setCctpFastMaxFeePpm` are deliberately not cross-checked. A non-zero
+  allowance would not prove it covers Circle's current fast fee, so requiring `> 0` would guard
+  only the exactly-zero configuration, which is no worse than any other under-funded one. The
+  burn succeeds either way; completion then depends on Circle's attestation and destination
+  execution (TB5), and Circle documents that an under-funded fast request may be degraded to
+  standard. `Settled.fast` records the _requested_ mode and off-chain consumers must not read it
+  as the delivered finality. The reference backend does not request fast at all today.
 - **DoS.5.R.1** — `_burnLimit` probes `burnLimitsPerMessage` and reverts early
   (`burn unsupported`) instead of burning into a dead bridge.
 - **DoS.5.R.2** — _Risk accepted (deliberate trade-off):_ if Circle permanently retired the
