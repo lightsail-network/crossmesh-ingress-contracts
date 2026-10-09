@@ -9,6 +9,14 @@ import {DepositFactory} from "../src/DepositFactory.sol";
 
 /// Config governance: immutable-cap clamps, owner-only setters, the `feeCollector` / `rescueSink`
 /// non-zero guards, the one-time `init`, and ownership transfer.
+/// A would-be factory whose `implementation()` points at an address with no code — exercises the second
+/// wiring check in `setFactory` on its own.
+contract CodelessImplFactoryStub {
+    function implementation() external pure returns (address) {
+        return address(0xdead);
+    }
+}
+
 contract ConfigTest is Base {
     /// Tunable fees are clamped to their immutable caps.
     function test_fee_setters_capped() public {
@@ -131,6 +139,30 @@ contract ConfigTest is Base {
             "a cancelled proposal must not be acceptable"
         );
         require(config.owner() == address(this), "owner unchanged");
+    }
+
+    /// `setFactory` grants operator-tier flush rights on every clone, so it accepts only the zero address or a
+    /// factory wired to THIS Config: an EOA, a contract without the factory interface, and a factory built on
+    /// another Config are all refused; the real factory and zero are accepted.
+    function test_set_factory_requires_wired_factory() public {
+        bytes4 sel = bytes4(keccak256("setFactory(address)"));
+        bytes memory noCode = abi.encodeWithSignature("Error(string)", "factory has no code");
+        bytes memory notWired = abi.encodeWithSignature("Error(string)", "factory not wired to this config");
+        (bool ok, bytes memory ret) = address(config).call(abi.encodeWithSelector(sel, NON_OP));
+        require(!ok && keccak256(ret) == keccak256(noCode), "EOA refused by the code check");
+        require(_reverts(address(config), abi.encodeWithSelector(sel, address(usdc))), "non-factory contract refused");
+        (ok, ret) = address(config).call(abi.encodeWithSelector(sel, address(new CodelessImplFactoryStub())));
+        require(!ok && keccak256(ret) == keccak256(notWired), "codeless implementation refused by the wiring check");
+        Config other = new Config(address(this));
+        other.init(address(usdc), address(tm), FORWARDER);
+        DepositForwarder impl2 = new DepositForwarder(IDepositConfig(address(other)));
+        DepositFactory f2 = new DepositFactory(address(impl2));
+        (ok, ret) = address(config).call(abi.encodeWithSelector(sel, address(f2)));
+        require(!ok && keccak256(ret) == keccak256(notWired), "factory of another Config refused");
+        config.setFactory(address(0));
+        require(config.factory() == address(0), "zero accepted");
+        config.setFactory(address(factory));
+        require(config.factory() == address(factory), "the wired factory accepted");
     }
 
     /// `setFactory(0)` revokes the relay: the factory's one-tx deployAndFlush stops passing the flush

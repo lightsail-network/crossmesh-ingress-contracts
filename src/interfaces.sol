@@ -108,7 +108,8 @@ interface IDepositConfig {
     function sweepDelay() external view returns (uint256);
     /// @notice Whether `account` is an allow-listed operator (hot key permitted to flush and collect fees).
     function isOperator(address account) external view returns (bool);
-    /// @notice Factory trusted to relay the operator's one-tx deploy+flush.
+    /// @notice Factory trusted to relay the operator's one-tx deploy+flush. Admitted by `flush` directly,
+    ///         so it holds operator-tier settlement rights on every clone.
     function factory() external view returns (address);
     /// @notice Destination for rescued stray native coin / non-USDC tokens.
     function rescueSink() external view returns (address);
