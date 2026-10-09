@@ -345,8 +345,14 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   paths exclude USDC on every chain, including native-USDC chains (Elevation.5). Keys are
   revocable per-address via `setOperator`.
 - **Elevation.2.R.1** — The factory pointer only gates `flush`, so a hostile value is exactly
-  operator-tier (Elevation.1). `setFactory(0)` is the revoke/kill switch; a wrong value degrades
-  the operator to two-tx operation, nothing more.
+  operator-tier (Elevation.1). A non-zero value must be a contract that reports
+  `implementation().config() == this Config`, so the right cannot be handed to a mistyped or
+  unrelated address by mistake; the check does not authenticate the code — a contract that lies
+  about its wiring passes, with exactly the operator-tier right above (it may time settlements,
+  including ahead of a fee-free sweep, and trigger fee collection to `feeCollector`; it cannot
+  redirect USDC). A wrong value costs the legitimate operator only its one-tx relay (two-tx
+  operation instead). `setFactory(0)` revokes the factory-specific right only — an address that
+  is also an operator, or anyone while `publicFlush` is on, keeps flushing.
 - **Elevation.3.R.1** — Owner worst case is bounded by the immutable caps: fees at their caps,
   delay at 7 days, swapped fee/rescue destinations, fast disabled, flush opened to everyone
   (`publicFlush` — settlement access only, DoS.9). The owner **cannot** redirect principal (USDC path immutable,
@@ -389,7 +395,7 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
   onboarding note (Appendix A).
 - **Are the treatments adequate?** Every implemented mitigation is exercised by the test suite:
-  66 unit tests across the Deploy / Flush / Sweep / Rescue / Config / PublicFlush suites,
+  67 unit tests across the Deploy / Flush / Sweep / Rescue / Config / PublicFlush suites,
   including a dedicated **wire-contract suite** (`test/CctpArgs.t.sol`) that byte-locks the
   hookData layout and every burn-call argument handed to Circle, an event-contract test locking
   every `Settled` field on both settlement paths, and **fuzzed property tests**

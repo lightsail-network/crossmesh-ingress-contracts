@@ -204,12 +204,31 @@ contract Config is IDepositConfig {
         emit OperatorSet(value, allowed);
     }
 
-    /// @notice Set the factory trusted to relay the operator's one-tx deploy+flush.
-    /// @param value New factory; `address(0)` unsets it (distrusts the factory relay path).
+    /// @notice Set the factory trusted to relay the operator's one-tx deploy+flush. The address set here
+    ///         is admitted by {DepositForwarder.flush} as a caller in its own right, so it holds
+    ///         operator-tier settlement rights on every clone: it may time settlements (including ahead
+    ///         of a fee-free sweep) and collect the capped fees, but cannot redirect USDC. A non-zero
+    ///         `value` must therefore REPORT being wired to this Config — a contract whose
+    ///         `implementation().config()` is this Config — which guards against handing the right to a
+    ///         mistyped or unrelated address; it does not authenticate the code, so a contract that merely
+    ///         reports that wiring passes, with that operator-tier right only. `address(0)` revokes this
+    ///         factory-specific right only; an address that is also an operator, or anyone while
+    ///         `publicFlush` is on, can still flush.
+    /// @param value New factory; `address(0)` unsets it (revokes the factory's flush rights).
     function setFactory(address value) external onlyOwner {
-        // Slither missing-zero-check: zero is a VALID value — it unsets the factory (distrusts the relay
-        // path; see @param). A wrong factory cannot redirect funds anyway: it only gates deployAndFlush.
+        // Slither missing-zero-check: zero is a VALID value — it unsets the factory (revokes its flush
+        // rights; see @param). Non-zero values must report wiring to this Config instead: the two view calls
+        // go to an owner-chosen contract (STATICCALL, so nothing can change state); a wrong one reverts here,
+        // and one that lies passes with operator-tier rights only — it cannot redirect funds.
         // slither-disable-next-line missing-zero-check
+        if (value != address(0)) {
+            require(value.code.length != 0, "factory has no code");
+            address impl = IFactoryWiring(value).implementation();
+            require(
+                impl.code.length != 0 && IForwarderWiring(impl).config() == address(this),
+                "factory not wired to this config"
+            );
+        }
         factory = value;
         emit FactorySet(value);
     }
@@ -245,4 +264,14 @@ contract Config is IDepositConfig {
         owner = pendingOwner;
         pendingOwner = address(0);
     }
+}
+
+/// @dev Minimal views of the factory and the forwarder used by {Config.setFactory} to check that a candidate
+///      factory is wired to THIS Config (declared here to avoid an import cycle with the contracts themselves).
+interface IFactoryWiring {
+    function implementation() external view returns (address);
+}
+
+interface IForwarderWiring {
+    function config() external view returns (address);
 }
