@@ -276,7 +276,10 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 
 - **Repudiate.1.R.1** — `Settled` publishes the full split — `settled`, `setupFee`,
   `perSettleFee`, `burned`, `viaSweep`, and the _effective_ fast mode — for off-chain
-  reconciliation; every `Config` setter emits an event.
+  reconciliation; every `Config` setter emits an event. On the relayed path
+  (`deployAndFlush`) `Settled.caller` is the factory, the clone's `msg.sender`; the factory's
+  `FlushRelayed(caller, forwarder)` names the initiating account, paired with `Settled` by
+  forwarder within the transaction.
 - **Repudiate.2.R.1** — `Deployed`, `SweepRequested`, `Rescued*` events plus the CCTP message
   itself are public; the deterministic address derivation lets anyone re-prove the
   recipient-address binding after the fact.
@@ -437,7 +440,7 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
   onboarding note (Appendix A).
 - **Are the treatments adequate?** Every implemented mitigation is exercised by the test suite:
-  85 unit tests across the Foundry suites in `test/`,
+  86 unit tests across the Foundry suites in `test/`,
   including a dedicated **wire-contract suite** (`test/CctpArgs.t.sol`) that byte-locks the
   hookData layout and every burn-call argument handed to Circle, an event-contract test locking
   every `Settled` field on both settlement paths, and **fuzzed property tests**
