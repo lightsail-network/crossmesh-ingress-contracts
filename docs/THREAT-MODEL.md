@@ -67,7 +67,8 @@ working as a public good with no operator (see DoS.1.R.2).
 | `Config` (process + data store)                            | One-time-init USDC path; owner-tunables clamped by immutable caps; operator list; factory pointer; fee/rescue destinations                                                                                                            |
 | USDC token (external process)                              | ERC-20 being bridged                                                                                                                                                                                                                  |
 | Circle `TokenMessengerV2` + attestation (external process) | Burns USDC, emits the cross-chain message                                                                                                                                                                                             |
-| Circle `CctpForwarder` on Stellar (external process)       | `mintRecipient`/`destinationCaller` of every burn; mints and atomically forwards to the committed recipient (`mint_and_forward`). **Circle-provided** |
+| Circle `CctpForwarder` on Stellar (external process)       | `mintRecipient`/`destinationCaller` of every burn; mints and atomically forwards to the committed recipient (`mint_and_forward`). **Circle-provided**; the call is permissionless (no auth, recipient taken from the message) |
+| Stellar relayer (external process, run by Cross Mesh)      | Fetches Circle's attestation and submits `mint_and_forward` for the settlements Cross Mesh flushes; a self-rescue sweep is completed manually today (automated relay pending). The call is permissionless: **anyone, including the depositor, can submit it** (DoS.1.R.3) |
 
 ### Data flow diagram
 
@@ -110,7 +111,7 @@ flowchart TB
     TM -- "5- burn" --> USDC
     TM -- "6- message + hookData" --> ATT
     ATT -- "6- attestation" --> SF
-    SF -- "7- mint_and_forward USDC\n(non-custodial, one invocation)" --> R
+    SF -- "7- mint_and_forward USDC\n(non-custodial, one invocation;\nsubmitted by the relayer — or anyone)" --> R
 
     style Z3 fill:#e8f1fb,stroke:#2b6cb0,stroke-width:2.5px
     style Z1 fill:#fdf0ee,stroke:#c05621
@@ -139,9 +140,12 @@ Numbered flows (threats in §2 reference these):
 5. The clone approves `TokenMessengerV2` and calls `depositForBurnWithHook`, burning
    `settled − fees` with `hookData` framing the committed recipient.
 6. Circle's attestation service observes the burn and attests the message.
-7. Circle's `CctpForwarder` on Stellar receives the message plus hookData and, in a single
-   non-custodial invocation (`mint_and_forward`), mints and forwards USDC to the committed
-   recipient.
+7. Circle's attestation is fetched and `mint_and_forward(message, attestation)` is submitted to
+   Circle's `CctpForwarder` on Stellar, which in a single non-custodial invocation mints and
+   forwards USDC to the committed recipient. Cross Mesh's Stellar relayer does this for the
+   settlements it flushed; the call is permissionless, so anyone — the depositor included — can
+   submit it, which is how a self-rescue `sweep` completes (DoS.1.R.3). Circle's Forwarding
+   Service does not serve Stellar, hence the zero `hookData` magic.
 8. Side flow: stray native coin / non-USDC tokens are rescued, operator-gated, to the
    governance-set `rescueSink` (USDC is explicitly excluded from rescue — including on chains
    where the native coin _is_ USDC, see Elevation.5).
@@ -164,7 +168,7 @@ Numbered flows (threats in §2 reference these):
 | TB2 | Anyone ↔ deposit address (flows 2, 3′)             | Permissionless by design; safe because no caller input chooses amount or destination                                                                |
 | TB3 | Operator/factory ↔ `flush` (flow 3)                | Semi-trusted: may _time_ settlements and charge _capped_ fees; cannot redirect                                                                      |
 | TB4 | Owner ↔ `Config` setters                           | Semi-trusted: bounded by immutable caps; cannot touch the USDC path after `init`. The path itself is the owner's choice at `init` (sanity-checked, not authenticated), so addresses are issued for a chain only once it is initialized AND the wiring is verified against Circle's published addresses (Elevation.3.R.1) |
-| TB5 | EVM contracts ↔ Circle CCTP (`TokenMessengerV2`, attestation, `CctpForwarder`) ↔ recipient (flows 5–7) | Trusted bridge dependency, pinned at `init`; the burn limit is probed before every settlement, and the hookData this repo emits matches Circle's published layout byte-for-byte (`_hookData`) |
+| TB5 | EVM contracts ↔ Circle CCTP (`TokenMessengerV2`, attestation, `CctpForwarder`) ↔ recipient (flows 5–7) | Trusted bridge dependency, pinned at `init`; the burn limit is probed before every settlement, and the hookData this repo emits matches Circle's published layout byte-for-byte (`_hookData`). Stellar-side submission (flow 7) is permissionless: Cross Mesh's relayer is a liveness convenience, not a trust dependency (DoS.1.R.3) |
 
 ---
 
@@ -319,6 +323,19 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   each knob single-purpose — so anyone settles any address in a single tx with no `requestSweep`
   wait. The switch cannot redirect USDC in either state — settlement always pays the committed
   recipient — and the sweep path (R.1) remains available regardless.
+- **DoS.1.R.3** — Stellar-side delivery does not depend on the operator either. The burn is
+  final on the EVM side; what remains is to fetch Circle's attestation and submit
+  `mint_and_forward(message, attestation)` to Circle's `CctpForwarder`. Cross Mesh — the service
+  that runs the operator key and issues addresses to integrators — runs a Stellar relayer
+  that submits this for every settlement it flushes (best effort, no fixed SLA). A depositor's
+  self-rescue `sweep` is detected by the same service and today completed manually on the
+  Stellar side (automated relay of external sweeps is a backlog item), but it never has to wait
+  for that: the call carries no authorization and the recipient is read from the message, so
+  anyone — the depositor included — can submit it from any Stellar account holding XLM for the
+  fee; the message and attestation are public. The remaining dependencies are Circle's: the
+  attestation service and the forwarder not being paused by Circle (TB5). Circle's Forwarding
+  Service does not serve Stellar, so the zero `hookData` magic (Circle's prescribed value)
+  forgoes nothing.
 - **DoS.2.R.1** — A partial `flush` cannot reset an armed window; the window closes only when the
   remaining armed `sweepCap` budget drops below `MIN_SWEEP_AMOUNT` or the balance is drained — and
   both outcomes deliver the armed funds to the committed recipient.
