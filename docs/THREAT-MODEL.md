@@ -211,6 +211,7 @@ STRIDE applied per flow. IDs below are referenced by the remediations in §3.
 | DoS.7 | `requestSweep` spam re-arms or extends windows to block operator settlement (flow 3′)                                                                                      |
 | DoS.8 | A malformed or unroutable recipient strkey is committed at address creation; the burn succeeds but the Stellar-side forward cannot complete (flows 1, 7)                   |
 | DoS.9 | While `publicFlush` is enabled with a non-zero fee schedule, anonymous callers can force per-deposit settlements, multiplying the base fees charged to depositors (flow 3) |
+| DoS.10 | USDC is mis-sent to the `DepositForwarder` implementation address, which is not a clone and has no committed recipient (flows 1, 5)                                   |
 
 ### Elevation of privilege
 
@@ -364,22 +365,34 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 - **DoS.9.R.2** — _Risk accepted (documented):_ `publicFlush` is designed to be flipped together
   with a zeroed fee schedule — the wind-down runbook of DoS.1.R.2 — and its setter documents the
   pairing; it is not intended to be enabled with fees still configured.
+- **DoS.10.R.1** — `flush`, `requestSweep` and `sweep` are `onlyClone` (`address(this) != implementation`,
+  the implementation's own address baked in as an immutable): on the implementation
+  `fetchCloneArgs` would return its own runtime bytecode as the recipient — a burn that either
+  reverts on the CCTP message-size cap (frozen) or, on a larger-cap chain, burns toward a
+  recipient the Stellar forwarder rejects (lost). Refusing settlement there removes both.
+- **DoS.10.R.2** — Recoverability: `rescueERC20` admits USDC only when `address(this) == implementation`.
+  The implementation is never a deposit address and can never settle, so USDC there is by
+  construction not principal — a mis-send, or collected fees if governance pointed `feeCollector`
+  at it; it goes to the owner-set `rescueSink`, operator-gated
+  like every rescue. On every clone the USDC exclusion is unchanged (Elevation.1.R.1).
+- **DoS.10.R.3** — _Residual, accepted:_ the mis-sender has no on-chain claim; returning the funds
+  is an off-chain operational matter once they reach the sink.
 
 ### Elevation of privilege
 
 - **Elevation.1.R.1** — Operator worst case is _bounded, not prevented_: trigger settlements at
-  capped fees and choose their timing. No amount, destination, or principal access — the rescue
-  paths exclude USDC on every chain, including native-USDC chains (Elevation.5). Keys are
-  revocable per-address via `setOperator`.
+  capped fees and choose their timing. No amount, destination, or principal access: the rescue
+  paths exclude USDC on every clone and every chain, native-USDC chains included (Elevation.5);
+  the only USDC an operator can move sits on the implementation — a mis-send or collected fees,
+  never principal (DoS.10.R.2). Keys are revocable per-address via `setOperator`.
 - **Elevation.2.R.1** — The factory pointer only gates `flush`, so a hostile value is exactly
-  operator-tier (Elevation.1). A non-zero value must be a contract that reports
-  `implementation().config() == this Config`, so the right cannot be handed to a mistyped or
-  unrelated address by mistake; the check does not authenticate the code — a contract that lies
-  about its wiring passes, with exactly the operator-tier right above (it may time settlements,
-  including ahead of a fee-free sweep, and trigger fee collection to `feeCollector`; it cannot
-  redirect USDC). A wrong value costs the legitimate operator only its one-tx relay (two-tx
-  operation instead). `setFactory(0)` revokes the factory-specific right only — an address that
-  is also an operator, or anyone while `publicFlush` is on, keeps flushing.
+  operator-tier (Elevation.1): it may time settlements, including ahead of a fee-free sweep, and
+  trigger fee collection to `feeCollector`; it cannot redirect USDC. A non-zero value must be a
+  contract reporting `implementation().config() == this Config`, so the right cannot go to a
+  mistyped or unrelated address by mistake; the check does not authenticate the code — a contract
+  that lies about its wiring passes, with that operator-tier right only. A wrong value costs the
+  legitimate operator only its one-tx relay. `setFactory(0)` revokes the factory-specific right
+  only — an address that is also an operator, or anyone while `publicFlush` is on, keeps flushing.
 - **Elevation.3.R.1** — Owner worst case is bounded by the immutable caps: fees at their caps,
   delay at 7 days, swapped fee/rescue destinations, fast disabled, flush opened to everyone
   (`publicFlush` — settlement access only, DoS.9). The owner **cannot** redirect principal (USDC path immutable,
@@ -425,7 +438,7 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
   onboarding note (Appendix A).
 - **Are the treatments adequate?** Every implemented mitigation is exercised by the test suite:
-  83 unit tests across the Foundry suites in `test/`,
+  85 unit tests across the Foundry suites in `test/`,
   including a dedicated **wire-contract suite** (`test/CctpArgs.t.sol`) that byte-locks the
   hookData layout and every burn-call argument handed to Circle, an event-contract test locking
   every `Settled` field on both settlement paths, and **fuzzed property tests**

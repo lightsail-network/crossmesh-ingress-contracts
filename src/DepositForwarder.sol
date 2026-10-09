@@ -17,8 +17,10 @@ import {ITokenMessengerV2, ITokenMessengerV2MinFee, ITokenMinter, IDepositConfig
 ///      hatch, after {requestSweep} + sweepDelay, fee-free). Neither takes a
 ///      caller-chosen amount — {flush} settles `min(balance, burnLimit)` and {sweep} `min(balance, sweepCap,
 ///      burnLimit)` — and `burn(settled − fee)` goes to the committed recipient via CCTP. Only CLONES are
-///      deposit addresses: never send USDC to the implementation itself (a non-clone has no immutable args,
-///      so a settlement would read a garbage `recipient` and build invalid hookData).
+///      deposit addresses: the implementation has no immutable args (`fetchCloneArgs` on it returns its own
+///      runtime bytecode), so settlement is refused there (`onlyClone`) rather than burning USDC toward a
+///      garbage `recipient`, and USDC that lands on it — a mis-send, or fees if it is set as the fee collector;
+///      never principal — is the one case {rescueERC20} may move USDC.
 contract DepositForwarder {
     using SafeERC20 for IERC20;
 
@@ -43,6 +45,10 @@ contract DepositForwarder {
 
     /// @notice The shared per-chain config (baked into the implementation, read by every clone).
     IDepositConfig public immutable config;
+    /// @dev The implementation's own address. Immutables live in the implementation bytecode that every
+    ///      clone delegates to, so this reads the same everywhere, while `address(this)` is the clone's —
+    ///      `address(this) == implementation` therefore means "running on the implementation, not a clone".
+    address private immutable implementation;
 
     /// @notice Timestamp after which anyone may {sweep}; 0 means no sweep has been requested.
     uint256 public sweepableAt;
@@ -81,7 +87,7 @@ contract DepositForwarder {
     /// @param to The rescue sink.
     /// @param amount Native amount swept.
     event RescuedNative(address indexed to, uint256 amount);
-    /// @notice Emitted when a mis-sent non-USDC token is rescued.
+    /// @notice Emitted when a mis-sent token is rescued (non-USDC on a clone; USDC too on the implementation).
     /// @param token The rescued token.
     /// @param to The rescue sink.
     /// @param amount Token amount swept.
@@ -91,6 +97,15 @@ contract DepositForwarder {
     constructor(IDepositConfig config_) {
         require(address(config_) != address(0), "zero config");
         config = config_;
+        implementation = address(this);
+    }
+
+    /// @dev Settlement runs on clones only. On the implementation `_recipient` would be its own runtime
+    ///      bytecode: on chains with an 8 KiB CCTP message cap the burn reverts and the USDC is frozen, on
+    ///      larger-cap chains it burns toward a recipient the Stellar forwarder rejects and the USDC is lost.
+    modifier onlyClone() {
+        require(address(this) != implementation, "not a clone");
+        _;
     }
 
     /// @notice This clone's committed Stellar recipient, read from its immutable args.
@@ -189,7 +204,7 @@ contract DepositForwarder {
     // Slither reentrancy-benign: {_settle}'s external calls go only to USDC and Circle's TokenMessenger
     // (trusted, no untrusted callback); the post-call sweepCap drawdown is bounded by the armed snapshot.
     // slither-disable-next-line reentrancy-benign
-    function flush() external {
+    function flush() external onlyClone {
         // Gate order = call frequency: direct operator flush, factory relay, then the public switch — so
         // the hot paths short-circuit without paying the extra staticcall.
         require(config.isOperator(msg.sender) || msg.sender == config.factory() || config.publicFlush(), "not operator");
@@ -225,7 +240,7 @@ contract DepositForwarder {
     ///      the window only ever settles funds present NOW — a dust deposit cannot pre-arm a free sweep of future
     ///      deposits. `sweepableAt` is snapshotted now, capped by `maxSweepDelay`, so a later
     ///      `sweepDelay` change cannot retroactively extend it. Idempotent while already armed.
-    function requestSweep() external {
+    function requestSweep() external onlyClone {
         uint256 balance = IERC20(config.usdc()).balanceOf(address(this));
         require(balance >= MIN_SWEEP_AMOUNT, "below sweep minimum");
         // Slither timestamp/incorrect-equality: `sweepableAt == 0` is the not-yet-armed sentinel (0 is
@@ -255,7 +270,7 @@ contract DepositForwarder {
     // (trusted, no untrusted callback); the post-call window close only ever shrinks what a re-entrant
     // sweep could settle.
     // slither-disable-next-line reentrancy-no-eth
-    function sweep() external {
+    function sweep() external onlyClone {
         // Slither timestamp: safe per the drift note in the @dev above — `sweepDelay` is hours/days, so
         // second-level validator drift cannot meaningfully open the window early.
         // slither-disable-start timestamp
@@ -314,18 +329,22 @@ contract DepositForwarder {
         require(usdc.balanceOf(address(this)) >= usdcBefore, "native is USDC");
     }
 
-    /// @notice Recover a mis-sent non-USDC token to the rescue sink. Operator only.
-    /// @dev USDC is excluded — recipient-bound USDC can only leave via {flush}/{sweep}. The exclusion is only
-    ///      meaningful once Config is initialized: before {IDepositConfig-init}, `config.usdc()` is the zero
-    ///      address and `token != usdc` would admit the real USDC, so rescue is refused outright until then
-    ///      (settlement is unavailable in that state anyway). Uses SafeERC20 so non-standard tokens (e.g.
-    ///      USDT, whose `transfer` returns no bool) are still recoverable.
-    /// @param token The token to rescue (must not be USDC).
+    /// @notice Recover a mis-sent token to the rescue sink: any token but USDC on a clone; on the
+    ///         implementation (never a deposit address) USDC too. Operator only.
+    /// @dev USDC is excluded on every clone — recipient-bound USDC can only leave via {flush}/{sweep}. The
+    ///      one exception is the implementation itself: it is never a deposit address, settlement is refused
+    ///      on it (`onlyClone`), so USDC there is never principal — a mis-send, or collected fees if governance
+    ///      set it as the fee collector — and has no other way out. The exclusion is
+    ///      only meaningful once Config is initialized: before {IDepositConfig-init}, `config.usdc()` is the
+    ///      zero address and `token != usdc` would admit the real USDC, so rescue is refused outright until
+    ///      then (settlement is unavailable in that state anyway). Uses SafeERC20 so non-standard tokens
+    ///      (e.g. USDT, whose `transfer` returns no bool) are still recoverable.
+    /// @param token The token to rescue (must not be USDC, except on the implementation).
     function rescueERC20(address token) external {
         require(config.isOperator(msg.sender), "not operator");
         address usdc = config.usdc();
         require(usdc != address(0), "not initialized");
-        require(token != usdc, "USDC only via flush/sweep");
+        require(token != usdc || address(this) == implementation, "USDC only via flush/sweep");
         address sink = config.rescueSink();
         require(sink != address(0), "sink unset");
         uint256 amount = IERC20(token).balanceOf(address(this));
