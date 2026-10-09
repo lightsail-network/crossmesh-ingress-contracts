@@ -135,8 +135,10 @@ contract Config is IDepositConfig {
     }
 
     /// @notice Set the CCTP fee allowance for STANDARD burns (millionths of the burned amount). Standard
-    ///         transfers are free today, so 0 is fine; a small non-zero buffer keeps flushes alive if Circle
-    ///         ever introduces a standard fee (otherwise the burn's maxFee is too low and the burn reverts).
+    ///         transfers are free today, so 0 is fine. This is a floor on the allowance, not the whole of it:
+    ///         the forwarder lifts the allowance to the messenger's own on-chain minimum fee by itself
+    ///         ({DepositForwarder-_cctpParams}), so a Circle minimum-fee change does not depend on this
+    ///         being raised — up to the `maxCctpFeePpm` cap, above which settlement halts by design.
     /// @param value New allowance; must be `<= maxCctpFeePpm`.
     function setCctpStandardMaxFeePpm(uint256 value) external onlyOwner {
         require(value <= maxCctpFeePpm, "above cap");
@@ -246,9 +248,10 @@ contract Config is IDepositConfig {
     }
 
     /// @notice Begin a two-step ownership transfer; `to` must call {acceptOwnership} for it to take effect.
-    /// @dev Two-step (propose + accept) so a mistyped address cannot brick governance — which would also
-    ///      strand the CCTP fee allowances if Circle changed a fee, halting every flush/sweep. Pass
-    ///      `address(0)` to cancel a pending transfer.
+    /// @dev Two-step (propose + accept) so a mistyped address cannot brick governance — a lost owner key
+    ///      freezes every tunable (fees, operators, the fast switch, the rescue sink) at its current value.
+    ///      Settlement itself never waits on the owner: the CCTP allowance follows Circle's on-chain minimum
+    ///      (see `DepositForwarder._cctpParams`). Pass `address(0)` to cancel a pending transfer.
     /// @param to Proposed new owner (or `address(0)` to cancel).
     function transferOwnership(address to) external onlyOwner {
         // Slither missing-zero-check: zero is a VALID value — it cancels a pending transfer (see @dev),

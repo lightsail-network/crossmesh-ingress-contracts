@@ -39,6 +39,21 @@ interface ITokenMessengerV2 {
     function localMinter() external view returns (address);
 }
 
+/// @title ITokenMessengerV2MinFee
+/// @notice The minimum-fee read of CCTP's TokenMessengerV2, kept apart from {ITokenMessengerV2} because it is
+///         NOT present on every deployment: the implementation live on Ethereum and Base (as of this writing)
+///         predates it and reverts on the selector, while Arc's implementation has it (returning 0 today).
+///         The forwarder therefore probes it via a tolerant `staticcall` ({DepositForwarder-_cctpMinFee}),
+///         never through this interface directly — a direct call would revert where the function is absent.
+interface ITokenMessengerV2MinFee {
+    /// @notice The minimum `maxFee` TokenMessengerV2 accepts for burning `amount`: `amount × minFee / 1e6`,
+    ///         floored to 1 subunit when `minFee` is non-zero; a burn whose `maxFee` is below it reverts
+    ///         with "Insufficient max fee".
+    /// @param amount The burn amount (token decimals; USDC = 6).
+    /// @return The minimum acceptable `maxFee` for `amount`.
+    function getMinFeeAmount(uint256 amount) external view returns (uint256);
+}
+
 /// @title ITokenMinter
 /// @notice Minimal interface to CCTP's TokenMinter — only the per-message burn-limit read used here.
 interface ITokenMinter {
@@ -73,7 +88,9 @@ interface IDepositConfig {
     function maxFeePpm() external view returns (uint256);
     /// @notice Upper bound on the self-rescue delay (the longest the operator can be given priority).
     function maxSweepDelay() external view returns (uint256);
-    /// @notice Upper bound on the CCTP fee rate passed per burn, in millionths of the burned amount.
+    /// @notice Upper bound on the CCTP fee rate passed per burn, in millionths of the burned amount. The
+    ///         forwarder applies it rounded up to a whole subunit, so on tiny burns the effective bound is
+    ///         coarser than the rate (1% of 2 subunits bounds `maxFee` at 1).
     function maxCctpFeePpm() external view returns (uint256);
 
     // --- owner-tunable values, each clamped to its cap ---

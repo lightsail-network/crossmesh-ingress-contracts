@@ -290,7 +290,11 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 
 - **DoS.1.R.1** — Permissionless, fee-free escape hatch: `requestSweep()` + `sweep()`, with the
   delay capped by the immutable `maxSweepDelay = 7 days`. Operator absence delays funds, never
-  strands them.
+  strands them. The hatch is owner-independent on the CCTP side too: the burn's `maxFee` is
+  lifted to the messenger's own on-chain minimum fee (`_cctpMinFee`, a tolerant probe that is a
+  no-op where the messenger predates minimum fees), so a Circle minimum-fee change cannot halt
+  `sweep` or standard `flush` pending an owner rate update — only a minimum above the immutable
+  1% cap halts settlement (DoS.5.R.4).
 - **DoS.1.R.2** — For a _deliberate_ wind-down, governance flips `Config.publicFlush` (opening
   `flush` and the factory's one-tx `deployAndFlush` to everyone) and zeroes the fee schedule —
   each knob single-purpose — so anyone settles any address in a single tx with no `requestSweep`
@@ -304,7 +308,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   1 subunit.
 - **DoS.4.R.1** — Effective fast mode requires _flush ∧ address-committed-fast ∧ `fastEnabled`_;
   `sweep` always settles via standard finality; `fastEnabled` doubles as a chain-level kill
-  switch. A fast address can never be stranded by fast-fee configuration.
+  switch. A fast address can never be stranded by fast-fee configuration, and the standard path
+  it falls back to needs no owner-set allowance either (DoS.1.R.1).
 - **DoS.5.R.1** — `_burnLimit` probes `burnLimitsPerMessage` and reverts early
   (`burn unsupported`) instead of burning into a dead bridge.
 - **DoS.5.R.2** — _Risk accepted (deliberate trade-off):_ if Circle permanently retired the
@@ -317,6 +322,12 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   Circle removes the entry — there is no other exit, and adding an owner-controlled one would
   give up the "owner cannot redirect principal" property (Elevation.3.R.1). Operational
   mitigation is monitoring Circle's denylist for deposit addresses.
+- **DoS.5.R.4** — _Risk accepted (deliberate trade-off):_ if Circle set a chain's minimum CCTP fee
+  above the immutable `maxCctpFeePpm` cap (1%), the forwarder's allowance stops at the cap and
+  every `flush` and `sweep` on that chain reverts at the messenger ("Insufficient max fee") until
+  the minimum comes back under the cap. Paying an uncapped minimum instead would let a Circle-side
+  change (or a permissionless `sweep` caller) impose an unbounded fee on depositors; halting is
+  the safer failure. Operational mitigation is monitoring Circle's fee announcements per chain.
 - **DoS.6.R.1** — Settlement takes `min(balance, burnLimit)` per call and drains an above-cap
   balance over successive calls; the sweep window stays open across partial settlements with no
   fresh cooldown.
@@ -356,7 +367,9 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 - **Elevation.3.R.1** — Owner worst case is bounded by the immutable caps: fees at their caps,
   delay at 7 days, swapped fee/rescue destinations, fast disabled, flush opened to everyone
   (`publicFlush` — settlement access only, DoS.9). The owner **cannot** redirect principal (USDC path immutable,
-  recipient committed, sweep permissionless). Two-step ownership transfer (`transferOwnership` +
+  recipient committed, sweep permissionless) and **cannot** starve settlement by under-setting the
+  CCTP fee allowance: the burn's `maxFee` is lifted to the messenger's on-chain minimum regardless
+  of the owner rates (DoS.1.R.1). Two-step ownership transfer (`transferOwnership` +
   `acceptOwnership`) prevents accidental loss; `transferOwnership(0)` cancels a pending transfer.
 - **Elevation.4.R.1** — `requestSweep` snapshots `sweepCap = balance` at arm time: the fee-free
   window only ever covers funds present _when armed_; deposits arriving later need a fresh
@@ -395,7 +408,7 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
   onboarding note (Appendix A).
 - **Are the treatments adequate?** Every implemented mitigation is exercised by the test suite:
-  67 unit tests across the Deploy / Flush / Sweep / Rescue / Config / PublicFlush suites,
+  81 unit tests across the Foundry suites in `test/`,
   including a dedicated **wire-contract suite** (`test/CctpArgs.t.sol`) that byte-locks the
   hookData layout and every burn-call argument handed to Circle, an event-contract test locking
   every `Settled` field on both settlement paths, and **fuzzed property tests**

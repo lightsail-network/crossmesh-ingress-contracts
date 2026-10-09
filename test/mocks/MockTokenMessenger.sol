@@ -19,9 +19,52 @@ contract MockTokenMessenger {
     address public lastCaller;
     uint64 public nonceCounter;
     address public localMinter;
+    /// Circle's on-chain minimum-fee rate (millionths), as in the TokenMessengerV2 implementation live on
+    /// Arc. 0 (the default, and Arc's live value today) = no minimum.
+    uint256 public minFee;
+    /// When true, `getMinFeeAmount` reverts with empty returndata — the behavior of the OLDER implementation
+    /// live on Ethereum/Base, where the selector does not exist at all.
+    bool public legacy;
+    /// When set, `getMinFeeAmount` returns exactly these bytes (as a successful call) instead of one word —
+    /// models a getter that is present but malformed or hostile; the forwarder's tolerant probe must cope.
+    bytes internal probeReturn;
+    bool public probeOverridden;
 
     function setLocalMinter(address minter) external {
         localMinter = minter;
+    }
+
+    function setMinFee(uint256 value) external {
+        minFee = value;
+    }
+
+    function setLegacy(bool value) external {
+        legacy = value;
+    }
+
+    function setProbeReturn(bytes calldata data) external {
+        probeReturn = data;
+        probeOverridden = true;
+    }
+
+    /// Mirrors TokenMessengerV2's public getter. Reverts (selector-absent style, no reason) in legacy mode.
+    function getMinFeeAmount(uint256 amount) external view returns (uint256) {
+        require(!legacy);
+        if (probeOverridden) {
+            bytes memory data = probeReturn;
+            assembly {
+                return(add(data, 0x20), mload(data))
+            }
+        }
+        return _calcMinFeeAmount(amount);
+    }
+
+    /// Mirrors TokenMessengerV2's `_calcMinFeeAmount`: `amount × minFee / 1e6`, floored to 1 when the rate
+    /// is non-zero (the burn path calls this directly, so a probe override cannot disarm the burn check).
+    function _calcMinFeeAmount(uint256 amount) internal view returns (uint256) {
+        if (minFee == 0) return 0;
+        uint256 fee = (amount * minFee) / 1e6;
+        return fee == 0 ? 1 : fee;
     }
 
     // Returns NOTHING — matches CCTP V2 (V1 returned uint64). Returning a value here is what
@@ -39,6 +82,10 @@ contract MockTokenMessenger {
         // Simulate the burn: pull the approved USDC out of the forwarder (checked, like the real messenger —
         // a missing approval must fail the settlement loudly, not silently succeed).
         require(IERC20Min(burnToken).transferFrom(msg.sender, address(this), amount), "burn transferFrom failed");
+        // The real messenger's checks, in its order: maxFee strictly below the amount, then (new
+        // implementations only) at least the on-chain minimum.
+        require(maxFee < amount, "Max fee must be less than amount");
+        if (!legacy) require(maxFee >= _calcMinFeeAmount(amount), "Insufficient max fee");
 
         lastAmount = amount;
         lastDomain = destinationDomain;
