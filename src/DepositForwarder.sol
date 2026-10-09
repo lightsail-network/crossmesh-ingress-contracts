@@ -262,12 +262,17 @@ contract DepositForwarder {
     }
 
     /// @notice Recover a mis-sent non-USDC token to the rescue sink. Operator only.
-    /// @dev USDC is excluded — recipient-bound USDC can only leave via {flush}/{sweep}. Uses SafeERC20 so
-    ///      non-standard tokens (e.g. USDT, whose `transfer` returns no bool) are still recoverable.
+    /// @dev USDC is excluded — recipient-bound USDC can only leave via {flush}/{sweep}. The exclusion is only
+    ///      meaningful once Config is initialized: before {IDepositConfig-init}, `config.usdc()` is the zero
+    ///      address and `token != usdc` would admit the real USDC, so rescue is refused outright until then
+    ///      (settlement is unavailable in that state anyway). Uses SafeERC20 so non-standard tokens (e.g.
+    ///      USDT, whose `transfer` returns no bool) are still recoverable.
     /// @param token The token to rescue (must not be USDC).
     function rescueERC20(address token) external {
         require(config.isOperator(msg.sender), "not operator");
-        require(token != config.usdc(), "USDC only via flush/sweep");
+        address usdc = config.usdc();
+        require(usdc != address(0), "not initialized");
+        require(token != usdc, "USDC only via flush/sweep");
         address sink = config.rescueSink();
         require(sink != address(0), "sink unset");
         uint256 amount = IERC20(token).balanceOf(address(this));

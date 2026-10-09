@@ -79,6 +79,47 @@ interface VmExt {
     function deal(address, uint256) external;
 }
 
+/// Before `Config.init`, `config.usdc()` is address(0): the `token != usdc` exclusion in `rescueERC20` would then
+/// admit the REAL USDC, so both rescue paths must refuse to run until the Config is initialized. `setOperator`
+/// and `setRescueSink` do not require init, so this state is reachable.
+contract RescueUninitializedTest {
+    VmExt constant vm = VmExt(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    address constant SINK = address(0x5151);
+    /// The exact `Error(string)` payload both rescues must revert with before init.
+    bytes NOT_INITIALIZED = abi.encodeWithSignature("Error(string)", "not initialized");
+
+    MockUSDC usdc;
+    address fwd;
+
+    function setUp() public {
+        usdc = new MockUSDC();
+        Config config = new Config(address(this)); // deliberately NOT initialized
+        DepositForwarder impl = new DepositForwarder(IDepositConfig(address(config)));
+        DepositFactory factory = new DepositFactory(address(impl));
+        config.setOperator(address(this), true);
+        config.setRescueSink(SINK);
+        fwd = factory.deploy(bytes("GAUKMCQJ2FA2642KRMUH7UWU53M5F2PIE2LKCIBGQFAHGXBFLCH7LHPM"), 0, false);
+    }
+
+    /// The real USDC is NOT rescuable just because `config.usdc()` is still zero.
+    function test_rescue_erc20_refuses_before_init() public {
+        usdc.mint(fwd, 100e6);
+        (bool ok, bytes memory ret) = fwd.call(abi.encodeWithSignature("rescueERC20(address)", address(usdc)));
+        require(!ok, "pre-init rescueERC20 must revert");
+        require(keccak256(ret) == keccak256(NOT_INITIALIZED), "wrong revert reason");
+        require(usdc.balanceOf(fwd) == 100e6, "USDC moved!");
+    }
+
+    /// Native rescue is refused in the same state, with the same reason.
+    function test_rescue_native_refuses_before_init() public {
+        vm.deal(fwd, 1 ether);
+        (bool ok, bytes memory ret) = fwd.call(abi.encodeWithSignature("rescueNative()"));
+        require(!ok, "pre-init rescueNative must revert");
+        require(keccak256(ret) == keccak256(NOT_INITIALIZED), "wrong revert reason");
+        require(fwd.balance == 1 ether, "native moved!");
+    }
+}
+
 /// Native-coin-is-USDC chains (Arc): `address(this).balance` of a deposit address IS its USDC principal,
 /// so `rescueNative` must refuse to move it. Wires its own Config over a one-ledger USDC mock.
 contract RescueNativeLedgerTest {
