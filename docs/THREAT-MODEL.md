@@ -554,13 +554,21 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
   onboarding note (Appendix A).
 - **Are the treatments adequate?** Every implemented mitigation is exercised by the test suite:
-  90 unit tests across the Foundry suites in `test/`,
+  92 tests (unit, fuzz and a six-invariant stateful harness) across the Foundry suites in `test/`,
   including a dedicated **wire-contract suite** (`test/CctpArgs.t.sol`) that byte-locks the
   hookData layout and every burn-call argument handed to Circle, an event-contract test locking
   every `Settled` field on both settlement paths, and **fuzzed property tests**
   (`test/Fuzz.t.sol`, 256 runs each) for the three core invariants: fees are conserved and
   strictly below the settlement, the CCTP `maxFee` stays strictly below the burn amount, and a
-  sweep never exceeds its armed snapshot. Integration tests execute in CI against the **real
+  sweep never exceeds its armed snapshot. A **stateful invariant harness** (`test/Invariant.t.sol`)
+  drives random sequences of deposits, settlements, arming, sweeps, time warps and fee, delay,
+  burn-limit, minimum-fee and collector changes over three clones, and checks six invariants
+  after every sequence: USDC is conserved across the clones, the messenger and the collector; an
+  armed window always holds a burnable budget (>= 2 subunits) no larger than its balance; sweeps
+  never exceed the armed snapshot; an open window is sweepable whenever Circle's limit and
+  minimum allow a burn; a flush moves exactly its nominal amount out of the clone; and USDC is
+  never rescued off a clone. Reverting the sweep-minimum window rule (DoS.7.R.1) or the self-paid
+  collector refusal (DoS.2.R.2) makes it fail. Integration tests execute in CI against the **real
   CCTP V2 TokenMessenger and CreateX on an Ethereum mainnet fork** (`test/Fork.t.sol`,
   `test/CreateXFork.t.sol`). Static analysis (Slither 0.11.5) runs in CI under a zero-findings
   policy, with every intentional pattern suppressed inline next to a written justification, and
