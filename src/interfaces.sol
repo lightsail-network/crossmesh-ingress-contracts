@@ -44,7 +44,9 @@ interface ITokenMessengerV2 {
 interface ITokenMinter {
     /// @notice Maximum amount of `token` that may be burned in a single CCTP message.
     /// @param token The burn token (USDC).
-    /// @return The per-message burn cap (0 = no cap configured).
+    /// @return The per-message burn cap. 0 means burning `token` is UNSUPPORTED on this chain — Circle's
+    ///         TokenMinter reverts the burn — so the forwarder treats 0 as a halt of flush and sweep
+    ///         ({DepositForwarder-_burnLimit} reverts), not as "no cap".
     function burnLimitsPerMessage(address token) external view returns (uint256);
 }
 
