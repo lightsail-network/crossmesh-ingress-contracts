@@ -61,7 +61,8 @@ contract DeployCwia {
         bytes memory factoryInit = abi.encodePacked(type(DepositFactory).creationCode, abi.encode(impl));
         factory = CreateXLib.deploy(SALT_FACTORY, factoryInit);
 
-        // owner is the initial operator + fee collector; sweepDelay and fees stay 0 until the owner sets them.
+        // owner is the initial operator + fee collector; fees stay 0 until the owner sets them, and the sweep
+        // delay starts at Config's 1-hour floor.
         if (!Config(config).isOperator(owner)) Config(config).setOperator(owner, true);
         if (Config(config).factory() != factory) Config(config).setFactory(factory);
         if (Config(config).feeCollector() == address(0)) Config(config).setFeeCollector(owner); // fees default 0

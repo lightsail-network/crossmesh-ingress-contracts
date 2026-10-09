@@ -41,6 +41,33 @@ contract ConfigTest is Base {
         );
     }
 
+    /// The sweep delay is floored, and starts at the floor: a zero (or sub-floor) delay would let a depositor
+    /// arm and sweep in one transaction, before any fee-charging flush — making the fee schedule optional.
+    function test_sweep_delay_floored_and_defaults_to_floor() public {
+        Config fresh = new Config(address(this));
+        require(fresh.sweepDelay() == 1 hours && fresh.minSweepDelay() == 1 hours, "starts at the 1-hour floor");
+        require(_reverts(address(fresh), abi.encodeWithSignature("setSweepDelay(uint256)", uint256(0))), "0 refused");
+        require(
+            _reverts(address(fresh), abi.encodeWithSignature("setSweepDelay(uint256)", uint256(1 hours - 1))),
+            "below the floor refused"
+        );
+        fresh.setSweepDelay(1 hours);
+        fresh.setSweepDelay(7 days);
+        require(fresh.sweepDelay() == 7 days, "within bounds accepted");
+    }
+
+    /// Same-transaction arm-and-sweep is impossible even on an untouched Config: `sweep` right after
+    /// `requestSweep` must wait out the floor.
+    function test_same_tx_arm_and_sweep_blocked_by_floor() public {
+        address fwd = factory.deploy(_r(), 60, false);
+        usdc.mint(fwd, 100e6);
+        DepositForwarder(fwd).requestSweep();
+        require(_reverts(fwd, abi.encodeWithSignature("sweep()")), "no same-tx fee-free sweep");
+        vm.warp(DepositForwarder(fwd).sweepableAt());
+        DepositForwarder(fwd).sweep();
+        require(usdc.balanceOf(fwd) == 0, "sweepable once the floor has elapsed");
+    }
+
     /// Setters are owner-only.
     function test_setters_only_owner() public {
         vm.prank(NON_OP);
