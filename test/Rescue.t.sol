@@ -7,6 +7,7 @@ import {MockUSDC} from "./mocks/MockUSDC.sol";
 import {MockNoReturnToken} from "./mocks/MockNoReturnToken.sol";
 import {MockNativeLedgerUSDC} from "./mocks/MockNativeLedgerUSDC.sol";
 import {MockTokenMessenger} from "./mocks/MockTokenMessenger.sol";
+import {MockTokenMinter} from "./mocks/MockTokenMinter.sol";
 import {Config} from "../src/Config.sol";
 import {IDepositConfig} from "../src/interfaces.sol";
 import {DepositFactory} from "../src/DepositFactory.sol";
@@ -176,8 +177,12 @@ contract RescueNativeLedgerTest {
 
     function setUp() public {
         usdc = new MockNativeLedgerUSDC();
+        MockTokenMessenger tm = new MockTokenMessenger();
+        MockTokenMinter minter = new MockTokenMinter();
+        minter.setBurnLimit(address(usdc), 1_000_000_000e6); // init requires a pair that can burn the token
+        tm.setLocalMinter(address(minter));
         Config config = new Config(address(this));
-        config.init(address(usdc), address(new MockTokenMessenger()), FORWARDER);
+        config.init(address(usdc), address(tm), FORWARDER);
         DepositForwarder impl = new DepositForwarder(IDepositConfig(address(config)));
         factory = new DepositFactory(address(impl));
         config.setOperator(address(this), true);

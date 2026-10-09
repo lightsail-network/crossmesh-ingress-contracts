@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.35;
 
-import {IDepositConfig} from "./interfaces.sol";
+import {IDepositConfig, ITokenMessengerV2, ITokenMinter, STELLAR_DOMAIN} from "./interfaces.sol";
 
 /// @title Config
 /// @notice Shared, per-chain configuration that every `DepositForwarder` reads. The per-chain wiring
@@ -9,10 +9,15 @@ import {IDepositConfig} from "./interfaces.sol";
 ///         code — so the Config address is identical across chains. Fees and the sweep delay are
 ///         owner-tunable, each clamped by an IMMUTABLE cap that a user can verify before depositing;
 ///         the operator set, trusted factory and fee/rescue destinations are owner-set addresses whose
-///         worst case is bounded by those same caps (none of them can redirect the principal).
+///         worst case is bounded by those same caps (none of them can redirect the principal). That
+///         bound holds on a chain from a VERIFIED {init} onward: deposit addresses are computable on every
+///         chain before Config is initialized there, and the USDC path on that chain is whatever the owner
+///         passes to {init} — {init} only sanity-checks it — so an address is handed out for a chain only
+///         once `initialized` is true there AND the wiring has been checked against Circle's published
+///         addresses (see the threat model).
 /// @dev Governing rule for "may be mutable": only values that provably cannot redirect USDC. The USDC
-///      path (usdc / tokenMessenger / stellarForwarder) is therefore immutable; fees are bounded by
-///      immutable caps and `sweepDelay` by `minSweepDelay`/`maxSweepDelay`.
+///      path (usdc / tokenMessenger / stellarForwarder) is therefore immutable once set; fees are
+///      bounded by immutable caps and `sweepDelay` by `minSweepDelay`/`maxSweepDelay`.
 contract Config is IDepositConfig {
     // --- immutable wiring (set once by init) ---
     address public override usdc;
@@ -102,12 +107,28 @@ contract Config is IDepositConfig {
     }
 
     /// @notice Wire the per-chain USDC path. Callable once, by the owner.
+    /// @dev Partial sanity checks against an honest mis-wiring, which the one-way latch would make permanent (a
+    ///      replacement Config moves every deposit address): both contracts must have code; `tokenMessenger_`
+    ///      must be CCTP V2 (`messageBodyVersion() == 1` — V1 also has `localMinter()` and a burn limit but
+    ///      no `depositForBurnWithHook`, so every settlement would revert), must report a non-zero per-message
+    ///      burn limit for `usdc_` through its `localMinter()`, and must have a remote TokenMessenger
+    ///      registered for Stellar ({STELLAR_DOMAIN}). These catch the mistakes that could never settle; they
+    ///      do not authenticate the pair as Circle's canonical one and do not bound a hostile owner before
+    ///      `init` (see the contract notice) — that is what verifying the values against Circle's published
+    ///      addresses before issuing any address is for.
     /// @param usdc_ The chain's USDC token.
     /// @param tokenMessenger_ The chain's CCTP V2 TokenMessenger.
     /// @param stellarForwarder_ The Stellar forwarder (as bytes32) that receives the CCTP mint.
     function init(address usdc_, address tokenMessenger_, bytes32 stellarForwarder_) external onlyOwner {
         require(!initialized, "already initialized");
         require(usdc_ != address(0) && tokenMessenger_ != address(0) && stellarForwarder_ != bytes32(0), "zero");
+        require(usdc_.code.length != 0 && tokenMessenger_.code.length != 0, "no code");
+        require(ITokenMessengerV2(tokenMessenger_).messageBodyVersion() == 1, "not CCTP V2");
+        address minter = ITokenMessengerV2(tokenMessenger_).localMinter();
+        require(minter != address(0) && ITokenMinter(minter).burnLimitsPerMessage(usdc_) != 0, "usdc not burnable");
+        require(
+            ITokenMessengerV2(tokenMessenger_).remoteTokenMessengers(STELLAR_DOMAIN) != bytes32(0), "no stellar route"
+        );
         usdc = usdc_;
         tokenMessenger = tokenMessenger_;
         stellarForwarder = stellarForwarder_;

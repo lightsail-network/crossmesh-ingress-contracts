@@ -19,6 +19,22 @@ contract MockTokenMessenger {
     address public lastCaller;
     uint64 public nonceCounter;
     address public localMinter;
+    /// 1 = CCTP V2 (the default, what `Config.init` requires); 0 models Circle's V1 messenger.
+    uint32 public messageBodyVersion = 1;
+    /// Remote TokenMessenger per destination domain; the Stellar route (27) is registered by default.
+    mapping(uint32 => bytes32) public remoteTokenMessengers;
+
+    constructor() {
+        remoteTokenMessengers[27] = bytes32(uint256(1));
+    }
+
+    function setMessageBodyVersion(uint32 v) external {
+        messageBodyVersion = v;
+    }
+
+    function setRemoteTokenMessenger(uint32 domain, bytes32 value) external {
+        remoteTokenMessengers[domain] = value;
+    }
     /// Circle's on-chain minimum-fee rate in units of MIN_FEE_MULTIPLIER = 1e7 (so 1e5 = 1%), as in the
     /// TokenMessengerV2 implementation live on Arc. 0 (the default, and Arc's live value today) = no minimum.
     uint256 public minFee;

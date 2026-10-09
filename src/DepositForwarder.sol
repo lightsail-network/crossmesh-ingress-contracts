@@ -4,7 +4,13 @@ pragma solidity 0.8.35;
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ITokenMessengerV2, ITokenMessengerV2MinFee, ITokenMinter, IDepositConfig} from "./interfaces.sol";
+import {
+    ITokenMessengerV2,
+    ITokenMessengerV2MinFee,
+    ITokenMinter,
+    IDepositConfig,
+    STELLAR_DOMAIN
+} from "./interfaces.sol";
 
 /// @title DepositForwarder
 /// @notice Trustless EVM→Stellar USDC deposit forwarder (the CWIA implementation). One shared
@@ -24,8 +30,6 @@ import {ITokenMessengerV2, ITokenMessengerV2MinFee, ITokenMinter, IDepositConfig
 contract DepositForwarder {
     using SafeERC20 for IERC20;
 
-    /// @dev CCTP destination domain for Stellar.
-    uint32 internal constant STELLAR_DOMAIN = 27;
     /// @dev CCTP finality thresholds (protocol constants): 2000 = standard (finalized, free), 1000 = fast
     ///      (confirmed, charges a fast fee). Circle buckets any value ≤1000 to fast and >1000 to standard.
     ///      Ref: https://developers.circle.com/cctp/concepts/finality-and-block-confirmations
