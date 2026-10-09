@@ -22,6 +22,14 @@ contract DepositFactory {
     /// @param fast Whether this address settles via a CCTP fast transfer (committed in the clone's args).
     event Deployed(address indexed forwarder, bytes recipient, uint256 index, bool fast);
 
+    /// @notice Emitted by {deployAndFlush}, naming the account that initiated the relayed settlement. The
+    ///         clone's `Settled.caller` is this factory on that path (it is the clone's `msg.sender`), so
+    ///         reconciliation pairs the two events by `forwarder` within the transaction to attribute the
+    ///         settlement to its initiator — an operator, or anyone while `publicFlush` is on.
+    /// @param caller The account that called {deployAndFlush}.
+    /// @param forwarder The clone that was settled.
+    event FlushRelayed(address indexed caller, address indexed forwarder);
+
     /// @param implementation_ The shared DepositForwarder implementation.
     constructor(address implementation_) {
         // Must be a live contract: clones delegatecall into it, so a non-contract impl would brick them.
@@ -84,6 +92,8 @@ contract DepositFactory {
     /// @notice One-tx: deploy (if needed) then flush the balance. OPERATOR-ONLY by default; open to
     ///         EVERYONE while `config.publicFlush()` is on (fees per the fee config either way).
     /// @dev Self-rescue does not use this path; it goes through `deploy` + `requestSweep` + `sweep` directly.
+    ///      Emits {FlushRelayed} with the initiating account, since the clone's `Settled.caller` records this
+    ///      factory on the relayed path.
     /// @param recipient The Stellar recipient (strkey UTF-8 bytes).
     /// @param index The per-recipient index.
     /// @param fast True for a CCTP fast-transfer address, false for standard.
@@ -92,6 +102,12 @@ contract DepositFactory {
         forwarder = deploy(recipient, index, fast);
         IDepositConfig cfg = DepositForwarder(forwarder).config();
         require(cfg.isOperator(msg.sender) || cfg.publicFlush(), "not operator"); // operator is the hot path
+        // Emitted before the flush (checks-effects-interactions): a failed flush reverts the whole tx, so the
+        // event only ever survives alongside the clone's own `Settled`. forge-lint reentrancy-events: the
+        // calls above it go only to the clone just deployed (this repo's code) and to Config — no untrusted
+        // callback can reorder or fabricate the log.
+        // forge-lint: disable-next-line(reentrancy-events)
+        emit FlushRelayed(msg.sender, forwarder);
         DepositForwarder(forwarder).flush();
     }
 }

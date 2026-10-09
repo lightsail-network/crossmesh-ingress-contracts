@@ -144,6 +144,42 @@ contract FlushTest is Base {
         revert("no Settled event");
     }
 
+    /// On the relayed path the clone's `Settled.caller` is the factory (its `msg.sender`); the initiating
+    /// account is attributed by the factory's `FlushRelayed`, paired with `Settled` by forwarder address.
+    function test_relayed_flush_attributes_initiator() public {
+        address expected = factory.computeAddress(_r(), 7, false);
+        usdc.mint(expected, 100e6);
+        vm.recordLogs();
+        address fwd = factory.deployAndFlush(_r(), 7, false);
+        require(fwd == expected, "deployed at the predicted address");
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 relayedSig = keccak256("FlushRelayed(address,address)");
+        bytes32 settledSig = keccak256("Settled(address,uint256,uint256,uint256,uint256,bool,bool)");
+        uint256 relayedCount;
+        uint256 settledCount;
+        uint256 relayedIdx;
+        uint256 settledIdx;
+        for (uint256 i = 0; i < logs.length; i++) {
+            Vm.Log memory entry = logs[i];
+            if (entry.topics.length == 0) continue;
+            if (entry.topics[0] == relayedSig) {
+                require(entry.emitter == address(factory), "FlushRelayed comes from the factory");
+                require(address(uint160(uint256(entry.topics[1]))) == address(this), "caller = initiator");
+                require(address(uint160(uint256(entry.topics[2]))) == fwd, "forwarder = settled clone");
+                relayedCount++;
+                relayedIdx = i;
+            } else if (entry.topics[0] == settledSig) {
+                require(entry.emitter == fwd, "Settled comes from the clone");
+                require(address(uint160(uint256(entry.topics[1]))) == address(factory), "Settled.caller is the factory");
+                settledCount++;
+                settledIdx = i;
+            }
+        }
+        require(relayedCount == 1 && settledCount == 1, "exactly one FlushRelayed and one Settled in the relayed tx");
+        require(relayedIdx < settledIdx, "FlushRelayed precedes Settled: the initiator is on record before the burn");
+    }
+
     /// The off-chain reconciliation contract: EVERY Settled field is exact on both paths — flush reports
     /// the precise fee split (viaSweep=false); a sweep reports zero fees, burned == settled, viaSweep=true.
     /// Balance-based tests would stay green if the emit ever mixed these up; this locks the event itself.
