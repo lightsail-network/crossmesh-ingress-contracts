@@ -9,6 +9,7 @@ import {DepositFactory} from "../src/DepositFactory.sol";
 interface Vm {
     function createSelectFork(string calldata) external returns (uint256);
     function store(address, bytes32, bytes32) external;
+    function warp(uint256) external;
     function envOr(string calldata, string calldata) external returns (string memory);
 }
 
@@ -52,7 +53,8 @@ contract CwiaForkTest {
         address fwd2 = factory.computeAddress(recipient, 1, false);
         vm.store(USDC, keccak256(abi.encode(fwd2, USDC_BALANCES_SLOT)), bytes32(uint256(100000)));
         factory.deploy(recipient, 1, false);
-        DepositForwarder(fwd2).requestSweep(); // sweepDelay defaults to 0 => immediately sweepable
+        DepositForwarder(fwd2).requestSweep();
+        vm.warp(DepositForwarder(fwd2).sweepableAt()); // sweepDelay starts at the 1-hour floor
         DepositForwarder(fwd2).sweep();
         require(IUSDC(USDC).balanceOf(fwd2) == 0, "sweep failed vs real CCTP (burn-limit read?)");
     }

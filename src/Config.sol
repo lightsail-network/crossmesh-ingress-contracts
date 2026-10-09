@@ -12,7 +12,7 @@ import {IDepositConfig} from "./interfaces.sol";
 ///         worst case is bounded by those same caps (none of them can redirect the principal).
 /// @dev Governing rule for "may be mutable": only values that provably cannot redirect USDC. The USDC
 ///      path (usdc / tokenMessenger / stellarForwarder) is therefore immutable; fees are bounded by
-///      immutable caps and `sweepDelay` by `maxSweepDelay`.
+///      immutable caps and `sweepDelay` by `minSweepDelay`/`maxSweepDelay`.
 contract Config is IDepositConfig {
     // --- immutable wiring (set once by init) ---
     address public override usdc;
@@ -26,6 +26,7 @@ contract Config is IDepositConfig {
     uint256 public constant override maxSetupFee = 100e6; // 100 USDC
     uint256 public constant override maxBaseFee = 100e6; // 100 USDC
     uint256 public constant override maxFeePpm = 10_000; // 1% — ppm: 1e6 = 100%, 1 bp = 100 ppm
+    uint256 public constant override minSweepDelay = 1 hours; // the operator's priority window is never shorter
     uint256 public constant override maxSweepDelay = 7 days;
     uint256 public constant override maxCctpFeePpm = 10_000; // 1% (ppm) — ceiling on the CCTP fee rate
 
@@ -94,6 +95,10 @@ contract Config is IDepositConfig {
         require(owner_ != address(0), "zero owner");
         owner = owner_;
         emit OwnerTransferred(address(0), owner_);
+        // The sweep delay starts AT the floor, never at 0: a zero delay would let a depositor arm and sweep
+        // in one transaction, ahead of any fee-charging flush, before the owner ever sets a delay.
+        sweepDelay = minSweepDelay;
+        emit SweepDelaySet(minSweepDelay);
     }
 
     /// @notice Wire the per-chain USDC path. Callable once, by the owner.
@@ -196,8 +201,12 @@ contract Config is IDepositConfig {
     }
 
     /// @notice Set the operator-priority window length.
-    /// @param value New sweep delay in seconds; must be `<= maxSweepDelay`.
+    /// @dev Floored at `minSweepDelay` so the window can never be zero: with no delay, `requestSweep` +
+    ///      `sweep` in one transaction would settle fee-free before any flush could charge — the fee
+    ///      schedule would be optional. The zero-fee wind-down uses `publicFlush`, not a zero delay.
+    /// @param value New sweep delay in seconds; must be within `[minSweepDelay, maxSweepDelay]`.
     function setSweepDelay(uint256 value) external onlyOwner {
+        require(value >= minSweepDelay, "below floor");
         require(value <= maxSweepDelay, "above cap");
         sweepDelay = value;
         emit SweepDelaySet(value);

@@ -39,7 +39,8 @@ caller-chosen amount or destination**:
 - `flush()` — operator/factory only; settles `min(balance, cctpBurnLimit)`; charges the service
   fees (one-time `setupFee` + `baseFee` + `settled × feePpm / 1e6`, each clamped by an immutable cap).
 - `sweep()` — the permissionless escape hatch: anyone may `requestSweep()` (balance ≥ `MIN_SWEEP_AMOUNT`), and
-  after `sweepDelay` (≤ immutable `maxSweepDelay` = 7 days) anyone may `sweep()` **fee-free**,
+  after `sweepDelay` (immutable bounds: `minSweepDelay` = 1 hour ≤ delay ≤ `maxSweepDelay` = 7 days,
+  starting at the floor) anyone may `sweep()` **fee-free**,
   settling `min(balance, sweepCap, cctpBurnLimit)` to the same committed recipient. Sweeps always
   use CCTP _standard_ finality, so no fast-mode configuration can strand self-rescue.
 
@@ -266,8 +267,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   `initialized` flag); immutable thereafter. Governing rule documented in `Config`: only values
   that provably cannot redirect USDC may be mutable.
 - **Tamper.3.R.1** — Immutable caps clamp every tunable: `maxSetupFee`/`maxBaseFee` 100 USDC,
-  `maxFeePpm` 1%, `maxSweepDelay` 7 days, `maxCctpFeePpm` 1%. A depositor can verify the worst
-  case on-chain before funding.
+  `maxFeePpm` 1%, `minSweepDelay` 1 hour / `maxSweepDelay` 7 days, `maxCctpFeePpm` 1%. A depositor
+  can verify the worst case on-chain before funding.
 - **Tamper.4.R.1** — `hookData` is built on-chain (`_hookData`) from the committed immutable args
   with a fixed 32-byte frame matching Circle's published hookData layout byte-for-byte; no
   external input reaches it.
@@ -419,6 +420,11 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   window only ever covers funds present _when armed_; deposits arriving later need a fresh
   request (a fresh delay — the one-extra-delay residual of DoS.7.R.1), and `flush` draws the armed
   budget down as it settles.
+- **Elevation.4.R.2** — The operator-priority window can never be zero: `Config.sweepDelay` starts
+  at the immutable `minSweepDelay` (1 hour) and `setSweepDelay` refuses anything below it, so
+  `requestSweep` + `sweep` in one transaction — a fee-free settlement ahead of any charging `flush`
+  — is impossible; the fee schedule cannot be made optional by a (default or mis-set) zero delay.
+  The zero-fee wind-down (DoS.1.R.2) uses `publicFlush`, which needs no zero delay.
 - **Elevation.5.R.1** — On Arc the native balance and the ERC-20 USDC balance are two views of
   one ledger (`address(this).balance` is the principal at 18 decimals), so an unconditional native
   sweep would be a principal-theft path at operator tier. `rescueNative` therefore snapshots
@@ -453,7 +459,7 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
   onboarding note (Appendix A).
 - **Are the treatments adequate?** Every implemented mitigation is exercised by the test suite:
-  86 unit tests across the Foundry suites in `test/`,
+  88 unit tests across the Foundry suites in `test/`,
   including a dedicated **wire-contract suite** (`test/CctpArgs.t.sol`) that byte-locks the
   hookData layout and every burn-call argument handed to Circle, an event-contract test locking
   every `Settled` field on both settlement paths, and **fuzzed property tests**

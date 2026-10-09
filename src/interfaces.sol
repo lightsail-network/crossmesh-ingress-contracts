@@ -94,6 +94,9 @@ interface IDepositConfig {
     function maxBaseFee() external view returns (uint256);
     /// @notice Upper bound on the per-settlement proportional fee, in millionths (1e6 = 100%).
     function maxFeePpm() external view returns (uint256);
+    /// @notice Lower bound on the self-rescue delay: the operator's priority window is never shorter, so a
+    ///         depositor cannot arm and sweep in one transaction ahead of a fee-charging flush.
+    function minSweepDelay() external view returns (uint256);
     /// @notice Upper bound on the self-rescue delay (the longest the operator can be given priority).
     function maxSweepDelay() external view returns (uint256);
     /// @notice Upper bound on the CCTP fee rate passed per burn, in millionths of the burned amount. The
@@ -133,6 +136,7 @@ interface IDepositConfig {
     /// @notice Destination for collected fees.
     function feeCollector() external view returns (address);
     /// @notice Operator-priority window: how long after `requestSweep()` before anyone may `sweep()`.
+    ///         Always within `[minSweepDelay, maxSweepDelay]` (starts at the floor).
     function sweepDelay() external view returns (uint256);
     /// @notice Whether `account` is an allow-listed operator (hot key permitted to flush and collect fees).
     function isOperator(address account) external view returns (bool);
