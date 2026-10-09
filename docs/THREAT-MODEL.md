@@ -360,6 +360,15 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 - **DoS.2.R.1** — A partial `flush` cannot reset an armed window; the window closes only when the
   remaining armed `sweepCap` budget drops below `MIN_SWEEP_AMOUNT` or the balance is drained — and
   both outcomes deliver the armed funds to the committed recipient.
+- **DoS.2.R.2** — The drawdown is by the nominal settled amount, so it relies on the fee actually
+  leaving the clone. `_collectFees` therefore refuses a `feeCollector` equal to the settling clone
+  (`fee collector is this clone`): otherwise an owner could point the collector at a deposit
+  address, set the flat fee just under its balance, and have each flush "collect" the fee to the
+  clone itself while burning a few subunits — closing the armed window and keeping up to
+  `setupFee + baseFee + 1%` in place every cycle, with the depositor re-arming forever. (Found in
+  internal review after the assessment; it needed only the owner key, which can also grant itself
+  flush rights.) A collector that is another clone or the implementation is a real transfer and
+  stays allowed. Covered by `test/Sweep.t.sol` (`test_self_collector_cannot_reset_window`).
 - **DoS.3.R.1** — `flush` reverts when fees would consume the settlement (`fee exceeds settled`),
   but `sweep` is fee-free and clamps CCTP `maxFee < toBurn`, so self-rescue works down to
   `MIN_SWEEP_AMOUNT` (2 subunits) — the smallest burn Circle accepts once a minimum fee is set
@@ -548,7 +557,7 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
   onboarding note (Appendix A).
 - **Are the treatments adequate?** Every implemented mitigation is exercised by the test suite:
-  89 unit tests across the Foundry suites in `test/`,
+  90 unit tests across the Foundry suites in `test/`,
   including a dedicated **wire-contract suite** (`test/CctpArgs.t.sol`) that byte-locks the
   hookData layout and every burn-call argument handed to Circle, an event-contract test locking
   every `Settled` field on both settlement paths, and **fuzzed property tests**
