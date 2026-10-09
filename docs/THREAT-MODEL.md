@@ -362,7 +362,16 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   sufficiency. `Settled.fast` records the _requested_ mode and off-chain consumers must not read
   it as the delivered finality. The reference backend does not request fast at all today.
 - **DoS.5.R.1** — `_burnLimit` probes `burnLimitsPerMessage` and reverts early
-  (`burn unsupported`) instead of burning into a dead bridge.
+  (`burn unsupported`) instead of burning into a dead bridge. _Risk accepted (chain-independent
+  addresses):_ because a deposit address is the same on every EVM chain (Appendix A), it can
+  receive USDC on a chain where `Config` is not initialized or Circle's burn limit is 0, and
+  there it has no exit until that chain is onboarded — `flush`/`sweep` revert here and
+  `rescueERC20` refuses USDC by design (Elevation.1). Committing `chainid` into the salt would
+  give up the cross-chain address scheme and was rejected; an `isChainReady()` view was declined
+  because the backend reads `initialized()` and `burnLimitsPerMessage` directly. The control is
+  operational: Cross Mesh issues an address for a chain only where `Config` is initialized and
+  Circle's burn limit for USDC is non-zero, and publishes the supported-chain list to integrators
+  (Appendix A, "Issuing addresses per chain").
 - **DoS.5.R.2** — _Risk accepted (deliberate trade-off):_ if Circle permanently retired the
   pinned `TokenMessengerV2`, `flush` and `sweep` would both revert and USDC would sit in deposit
   addresses. The _absence_ of any admin USDC-recovery path is what keeps principal out of every
@@ -569,8 +578,11 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   address would silence the guard).
 - **Issuing addresses per chain:** never hand out a deposit address for a chain before `Config`
   is initialized _there_ and its `usdc` / `tokenMessenger` / `stellarForwarder` have been checked
-  against Circle's published addresses — the owner bound (Elevation.3.R.1) only starts at `init`,
-  and `init` is permanent: a wrong value cannot be corrected without a new Config, which moves
-  every deposit address. `init` rejects the mis-wirings that could never settle (no code, a V1
-  messenger, a zero burn limit for the token, no Stellar route), but it cannot tell a canonical
-  pair from a plausible impostor — the verification step is what the owner bound rests on.
+  against Circle's published addresses, and Circle's `burnLimitsPerMessage(usdc)` there is
+  non-zero (`init` checks it once; Circle can change it later) — the owner bound
+  (Elevation.3.R.1) only starts at a verified `init`, and `init` is permanent: a wrong value cannot be
+  corrected without a new Config, which moves every deposit address. Publish the supported-chain
+  list to integrators and remove a chain from it the moment either condition stops holding
+  (DoS.5.R.1). `init` rejects the obvious mis-wirings (no code, a V1 messenger, a zero burn limit
+  for the token, no Stellar route) but cannot tell a canonical pair from a plausible impostor — the
+  verification step is what the owner bound rests on.
