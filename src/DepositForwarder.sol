@@ -439,7 +439,10 @@ contract DepositForwarder {
 
     /// @dev Build the CCTP hookData: a 32-byte header (24 zero bytes + `uint32 version=0` + `uint32 length`)
     ///      followed by the recipient strkey UTF-8 bytes. MUST match the off-chain builder and the Stellar
-    ///      forwarder's parser byte-for-byte.
+    ///      forwarder's parser byte-for-byte. The 24 zero bytes are the magic field: Circle's `CctpForwarder`
+    ///      docs prescribe zeros, and its source reads a zero magic as "not forwarded by Circle" — Circle's
+    ///      Forwarding Service does not serve Stellar in any case, so delivery is always a separate,
+    ///      permissionless `mint_and_forward` call (see README, "Stellar-side delivery").
     /// @return The hookData bytes.
     function _hookData() internal view returns (bytes memory) {
         bytes memory recipientBytes = _recipient();
