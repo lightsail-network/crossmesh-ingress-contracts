@@ -95,7 +95,11 @@ contract Config is IDepositConfig {
         _;
     }
 
-    /// @param owner_ Initial governance address (must be identical on every chain for stable addresses).
+    /// @param owner_ Initial governance address (must be identical on every chain for stable addresses). It is
+    ///        part of the init code, so on a chain where Config is deployed later it is again the owner of
+    ///        that fresh instance: {transferOwnership} rotates storage on already-deployed instances only (where
+    ///        it also decides who may {init}) and does not carry to fresh deployments on other chains — this key
+    ///        must stay secured for as long as new chains may be onboarded (see the threat model, Appendix A).
     constructor(address owner_) {
         require(owner_ != address(0), "zero owner");
         owner = owner_;

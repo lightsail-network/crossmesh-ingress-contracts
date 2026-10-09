@@ -428,18 +428,20 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   of the owner rates (DoS.1.R.1). Two-step ownership transfer (`transferOwnership` +
   `acceptOwnership`) prevents accidental loss; `transferOwnership(0)` cancels a pending transfer.
   _Scope of the bound — accepted residual:_ it applies on a chain from a _verified_ `init`
-  onward — `init` only sanity-checks its inputs, so a hostile pair latched at `init` stays hostile
-  for every later deposit too; what makes post-`init` deposits safe is the verification of the
-  latched values against Circle's published addresses before any address is issued. Deposit
-  addresses are computable on every chain before Config is initialized there, and USDC that
-  reaches one before a verified `init` has its exit decided by the owner's `init` values: a decoy
-  `usdc` would let `rescueERC20` move the real token, a hostile `tokenMessenger` would receive
-  every settlement's burn approval. No immutable cap covers that window (a compiled per-chain allow-list
-  would, at the cost of moving every address whenever a chain is added — rejected). Mitigation is
-  operational: an address is issued for a chain only after `Config.initialized()` is true there and
-  `usdc`/`tokenMessenger`/`stellarForwarder` match Circle's published addresses (Appendix A), and
-  `init` refuses the mis-wirings that could never settle (Tamper.2.R.1). Covered by `test/Config.t.sol`
-  (`test_init_rejects_miswired_path`).
+  onward. `init` only sanity-checks its inputs, so a hostile pair latched at `init` stays hostile
+  for every later deposit; what makes post-`init` deposits safe is checking the latched values
+  against Circle's published addresses before any address is issued. Deposit addresses are
+  computable on every chain before Config is initialized there, and USDC that reaches one before a
+  verified `init` has its exit decided by the owner's `init` values: a decoy `usdc` would let
+  `rescueERC20` move the real token, a hostile `tokenMessenger` would receive every settlement's
+  burn approval. No immutable cap covers that window (a compiled per-chain allow-list would, at
+  the cost of moving every address whenever a chain is added — rejected). Mitigation is
+  operational: an address is issued for a chain only after `Config.initialized()` is true there
+  and `usdc`/`tokenMessenger`/`stellarForwarder` match Circle's published addresses (Appendix A);
+  `init` rejects the listed mis-wirings (Tamper.2.R.1), covered by `test/Config.t.sol`
+  (`test_init_rejects_miswired_path`). A fresh Config on a new chain starts with the ORIGINAL
+  `owner_` baked into the init code, unaffected by rotations elsewhere; on an already-deployed
+  instance a local ownership transfer before `init` changes who can initialize it (Appendix A).
 - **Elevation.4.R.1** — `requestSweep` snapshots `sweepCap = balance` at arm time: the fee-free
   window only ever covers funds present _when armed_; deposits arriving later need a fresh
   request (a fresh delay — the one-extra-delay residual of DoS.7.R.1), and `flush` draws the armed
@@ -508,7 +510,17 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   init code, the anchor of the deterministic cross-chain address scheme (deployed via CreateX).
   Its custody is deliberately NOT part of the security model: the immutable caps bound even a
   fully compromised owner (Elevation.3), which is what lets depositors verify the worst case
-  without trusting any key-management claim.
+  without trusting any key-management claim — from a verified `init` on each chain (above).
+- **Rotation does not transfer `init` rights.** `transferOwnership` + `acceptOwnership` change
+  storage on the instances that already exist (an already-deployed instance follows its own,
+  possibly rotated, owner); a Config deployed later on a new chain comes up from the same init
+  code with the ORIGINAL `owner_` as its owner, and only that key can `init` it. Consequences: the
+  original key must stay secured permanently and is never "retired" by a rotation — a holder of
+  it, rotated, leaked or compromised, can wire the USDC path on any fresh deployment that has not
+  been initialized (the pre-`init` window of Elevation.3.R.1) — and a _lost_ original key means no
+  further chain can be initialized at the canonical addresses. Initialize Config on every chain
+  the service advertises to integrators before issuing addresses there, so the window is closed
+  where it matters, and keep the original key under the same custody as the active one.
 - **Operators:** hot keys on an allow-list sized for throughput; grant/revoke via `setOperator`
   with no redeploy.
 - **Determinism:** `solc 0.8.35`, `evm_version = shanghai`, optimizer 200 runs, metadata hash
