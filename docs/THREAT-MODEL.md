@@ -438,7 +438,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   operational: an address is issued for a chain only after `Config.initialized()` is true there and
   `usdc`/`tokenMessenger`/`stellarForwarder` match Circle's published addresses (Appendix A), and
   `init` refuses the mis-wirings that could never settle (Tamper.2.R.1). Covered by `test/Config.t.sol`
-  (`test_init_rejects_miswired_path`).
+  (`test_init_rejects_miswired_path`). Note that on a chain not yet initialized the `init` right
+  belongs to the ORIGINAL `owner_` baked into the init code, not to a rotated owner (Appendix A).
 - **Elevation.4.R.1** — `requestSweep` snapshots `sweepCap = balance` at arm time: the fee-free
   window only ever covers funds present _when armed_; deposits arriving later need a fresh
   request (a fresh delay — the one-extra-delay residual of DoS.7.R.1), and `flush` draws the armed
@@ -507,7 +508,16 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   init code, the anchor of the deterministic cross-chain address scheme (deployed via CreateX).
   Its custody is deliberately NOT part of the security model: the immutable caps bound even a
   fully compromised owner (Elevation.3), which is what lets depositors verify the worst case
-  without trusting any key-management claim.
+  without trusting any key-management claim — _from `init` onward on each chain_ (above).
+- **Rotation does not transfer `init` rights.** `transferOwnership` + `acceptOwnership` change
+  storage on the instances that already exist; a Config deployed later on a new chain comes up
+  from the same init code with the ORIGINAL `owner_` as its owner, and only that key can `init`
+  it. Consequences: the original key must stay secured permanently and is never "retired" by a
+  rotation (a holder of it — rotated, leaked or compromised — can wire the USDC path on any
+  not-yet-initialized chain, the pre-`init` window of Elevation.3.R.1); and a _lost_ original key
+  means no further chain can be initialized at the canonical addresses. Initialize Config on every
+  chain the service advertises to integrators before issuing addresses there, so the window
+  is closed where it matters, and keep the original key under the same custody as the active one.
 - **Operators:** hot keys on an allow-list sized for throughput; grant/revoke via `setOperator`
   with no redeploy.
 - **Determinism:** `solc 0.8.35`, `evm_version = shanghai`, optimizer 200 runs, metadata hash
