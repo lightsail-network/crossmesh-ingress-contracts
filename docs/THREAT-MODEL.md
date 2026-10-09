@@ -282,7 +282,27 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   mutable.
 - **Tamper.3.R.1** — Immutable caps clamp every tunable: `maxSetupFee`/`maxBaseFee` 100 USDC,
   `maxFeePpm` 1%, `minSweepDelay` 1 hour / `maxSweepDelay` 7 days, `maxCctpFeePpm` 1%. A depositor
-  can verify the worst case on-chain before funding.
+  can verify the worst case on-chain before funding. Stated per deposit, the service-fee bound
+  is `setupFee (once per address per chain, ≤ 100 USDC) + N × baseFee (≤ 100 USDC each) +
+  1% of the settled amount`, where N is the number of settlements the deposit needs: 1 when it
+  arrives in one batch and fits under Circle's per-message burn limit, more when deposits arrive
+  in batches or the balance exceeds the limit (10M USDC on Ethereum and Arc today; Circle can
+  change it, and a lower limit raises N for large deposits). Circle's own CCTP fee, if any, is
+  separate (DoS.4.R.1). So a deposit of a few hundred USDC could, at the caps, be consumed
+  almost entirely by fees, while a 10,000 USDC deposit settled in one batch loses at most
+  ≈ 300 USDC. Each `flush` settles the whole balance present (no caller-chosen amount), so the
+  operator cannot split one balance to multiply the base fee — N follows the arrival pattern
+  and the burn limit, not the operator's choice. _Risk accepted:_ the caps are absolute, not proportional, and
+  fee changes apply immediately rather than after a delay — deliberately. The flat fees exist
+  to cover L1 gas, which moves fast in a bull market: a proportional ceiling would force
+  settling small deposits at a loss, and a change delay longer than `maxSweepDelay` would leave
+  the operator settling at a loss or halting for a week during a gas spike (while depositors
+  can self-rescue for free anyway). Depositor protections are: the caps are on-chain and
+  immutable; the live schedule is published through the API before an address is funded;
+  deposits that cannot cover the fees are not settled (`fee exceeds settled` reverts, and the
+  backend parks them below its minimum) and stay self-rescuable; `sweep` is fee-free after
+  `sweepDelay`; and fees reach only the governance-set `feeCollector` — principal never
+  moves anywhere but the committed recipient.
 - **Tamper.4.R.1** — `hookData` is built on-chain (`_hookData`) from the committed immutable args
   with a fixed 32-byte frame matching Circle's published hookData layout byte-for-byte; no
   external input reaches it.

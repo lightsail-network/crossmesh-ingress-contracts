@@ -103,9 +103,14 @@ interface IDepositConfig {
 
     // --- immutable caps (the worst case a user can verify before depositing) ---
 
-    /// @notice Upper bound on the one-time setup fee.
+    /// @notice Upper bound on the one-time setup fee. Absolute (not proportional to the deposit) and sized
+    ///         for L1 gas at its worst; a small deposit can therefore lose most of itself to fees at the caps
+    ///         — the worst case a depositor must check before funding (see the threat model, Tamper.3.R.1).
     function maxSetupFee() external view returns (uint256);
-    /// @notice Upper bound on the per-settlement base fee.
+    /// @notice Upper bound on the per-settlement base fee; charged once per {DepositForwarder.flush}, which
+    ///         settles the whole balance present (up to Circle's per-message burn limit — a balance above it,
+    ///         or deposits arriving in batches, mean several settlements and several base fees). Same sizing
+    ///         rationale as `maxSetupFee`.
     function maxBaseFee() external view returns (uint256);
     /// @notice Upper bound on the per-settlement proportional fee, in millionths (1e6 = 100%).
     function maxFeePpm() external view returns (uint256);

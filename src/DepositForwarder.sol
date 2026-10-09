@@ -418,7 +418,9 @@ contract DepositForwarder {
     /// @dev Compute and transfer the fees for settling `settled`: a one-time `setupFee` plus the
     ///      per-settlement fee (`baseFee + settled × feePpm / 1e6`), each clamped to its cap, sent in one
     ///      transfer to the fee collector. `baseFee` is a flat per-settlement charge; it cannot be multiplied
-    ///      by splitting because {flush} has no caller-chosen amount (it settles the whole balance).
+    ///      by splitting because {flush} has no caller-chosen amount (it settles the whole balance). The only
+    ///      bound on the total is `total < settled`: the caps are absolute, so at the caps a small deposit can
+    ///      be consumed almost entirely by fees — the documented, verifiable worst case (Tamper.3.R.1).
     /// @param usdc The USDC token (passed in to avoid a re-read).
     /// @param settled Amount being settled.
     /// @return setupFee One-time setup fee charged here (0 if already paid).
