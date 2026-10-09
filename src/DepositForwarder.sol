@@ -31,6 +31,15 @@ contract DepositForwarder {
     uint32 internal constant FINALITY_FAST = 1000;
     /// @dev Denominator for every proportional rate (`feePpm` and the CCTP allowances are in ppm: 1e6 = 100%).
     uint256 internal constant PPM_DENOM = 1e6;
+    /// @dev Smallest balance {requestSweep} will arm a window for. A CCTP burn needs `maxFee < amount`, and
+    ///      under a non-zero Circle minimum fee `maxFee >= 1` ({_cctpMinFee}) — so a 1-subunit burn can never
+    ///      satisfy both, and a window armed over it could never be swept nor closed. 2 is the smallest burn
+    ///      that can satisfy both, for any minimum fee up to the `maxCctpFeePpm` cap. The same bound closes
+    ///      a window whose remaining `sweepCap` has dropped below it after a burn-limit-capped settlement
+    ///      ({flush}, {sweep}), so no armed budget can ever be left that CCTP could not burn. A single stray
+    ///      subunit cannot be settled on its own (below what CCTP can burn); it waits and rides along with
+    ///      the next deposit's settlement.
+    uint256 internal constant MIN_SWEEP_AMOUNT = 2;
 
     /// @notice The shared per-chain config (baked into the implementation, read by every clone).
     IDepositConfig public immutable config;
@@ -173,9 +182,10 @@ contract DepositForwarder {
     /// @dev No caller-chosen amount — each call settles `min(balance, burnLimit)`, so the flat base fee
     ///      cannot be multiplied by splitting one balance into many small settlements. A balance above the
     ///      cap drains over successive flushes. A pending {sweep} has its armed budget (`sweepCap`) drawn
-    ///      down by what flush settles; the countdown clears once that budget is spent or the balance is
-    ///      fully drained, but a partial flush that leaves both keeps it — so flush can't reset a depositor's
-    ///      self-rescue clock. Reconcile off-chain from the {Settled} event.
+    ///      down by what flush settles; the countdown clears once the remaining budget drops below
+    ///      `MIN_SWEEP_AMOUNT` or the balance is fully drained, but a partial flush that leaves both keeps
+    ///      it — so flush can't reset a depositor's self-rescue clock. Reconcile off-chain from the {Settled}
+    ///      event.
     // Slither reentrancy-benign: {_settle}'s external calls go only to USDC and Circle's TokenMessenger
     // (trusted, no untrusted callback); the post-call sweepCap drawdown is bounded by the armed snapshot.
     // slither-disable-next-line reentrancy-benign
@@ -189,28 +199,35 @@ contract DepositForwarder {
         uint256 amount = balance > limit ? limit : balance;
         _settle(usdc, amount, true);
         // If a sweep is pending, draw its armed budget down by what we settled — so flushing the armed funds
-        // leaves no stale free-sweep allowance — and clear once that budget is spent or the balance is fully
-        // drained. A partial flush that leaves both keeps the original window (can't reset the self-rescue clock).
+        // leaves no stale free-sweep allowance — and close once the remaining budget is below what CCTP can
+        // burn or the balance is fully drained. A partial flush that leaves both keeps the original window
+        // (can't reset the self-rescue clock).
         // Slither timestamp: `sweepableAt != 0` is the is-armed sentinel check (0 = no sweep requested),
         // not a deadline comparison a validator could nudge.
         // slither-disable-next-line timestamp
         if (sweepableAt != 0) {
-            sweepCap = sweepCap > amount ? sweepCap - amount : 0;
-            // Slither incorrect-equality: exact `== 0` sentinels — budget fully spent / balance fully
-            // drained; closing the window early only re-requires {requestSweep}, it cannot strand funds.
+            uint256 remaining = sweepCap > amount ? sweepCap - amount : 0;
+            // Slither incorrect-equality: `balanceOf == 0` is an exact fully-drained sentinel; closing the
+            // window early only re-requires {requestSweep}, it cannot strand funds.
             // slither-disable-next-line incorrect-equality
-            if (sweepCap == 0 || usdc.balanceOf(address(this)) == 0) sweepableAt = 0;
+            if (remaining < MIN_SWEEP_AMOUNT || usdc.balanceOf(address(this)) == 0) {
+                sweepableAt = 0; // budget unburnable or fully drained: close the window
+                sweepCap = 0; // a sub-minimum remainder is not kept armed — it joins the next deposit
+            } else {
+                sweepCap = remaining;
+            }
         }
     }
 
     /// @notice Escape hatch: start the permissionless self-rescue countdown for the funds currently here.
-    /// @dev Requires `balance > 0` (cannot pre-arm an empty address). Snapshots `sweepCap = balance`, so the
-    ///      window only ever settles funds present NOW — a dust deposit cannot pre-arm a free sweep of future
+    /// @dev Requires `balance >= MIN_SWEEP_AMOUNT` (cannot pre-arm an empty address, nor arm a window over a
+    ///      balance CCTP could never burn — see the constant). Snapshots `sweepCap = balance`, so the window
+    ///      only ever settles funds present NOW — a dust deposit cannot pre-arm a free sweep of future
     ///      deposits. `sweepableAt` is snapshotted now, capped by `maxSweepDelay`, so a later
     ///      `sweepDelay` change cannot retroactively extend it. Idempotent while already armed.
     function requestSweep() external {
         uint256 balance = IERC20(config.usdc()).balanceOf(address(this));
-        require(balance > 0, "nothing to sweep");
+        require(balance >= MIN_SWEEP_AMOUNT, "below sweep minimum");
         // Slither timestamp/incorrect-equality: `sweepableAt == 0` is the not-yet-armed sentinel (0 is
         // never a real deadline); it only makes re-requests idempotent while armed.
         // slither-disable-next-line timestamp,incorrect-equality
@@ -230,8 +247,10 @@ contract DepositForwarder {
     ///      `min(balance, sweepCap, burnLimit)` — never more than the snapshot armed at {requestSweep}, so a
     ///      pre-armed dust window cannot drain a later deposit. Above the CCTP cap it settles one
     ///      cap's worth and keeps the window OPEN (remainder drains with no fresh cooldown); the window clears
-    ///      once the armed budget is spent or the balance is drained. `sweepDelay` is hours/days, so
-    ///      second-level `block.timestamp` drift by a validator is immaterial here.
+    ///      once the remaining armed budget drops below `MIN_SWEEP_AMOUNT` — a remainder CCTP could never
+    ///      burn is dropped rather than kept armed, so it cannot pin the address against later deposits —
+    ///      or the balance is drained. `sweepDelay` is hours/days, so second-level `block.timestamp` drift
+    ///      by a validator is immaterial here.
     // Slither reentrancy-no-eth: {_settle}'s external calls go only to USDC and Circle's TokenMessenger
     // (trusted, no untrusted callback); the post-call window close only ever shrinks what a re-entrant
     // sweep could settle.
@@ -249,13 +268,15 @@ contract DepositForwarder {
         uint256 amount = balance < sweepCap ? balance : sweepCap; // never beyond the armed snapshot
         if (amount > limit) amount = limit; // nor beyond one CCTP burn cap
         _settle(usdc, amount, false);
-        sweepCap -= amount;
-        // Slither incorrect-equality: exact `== 0` sentinels — budget fully spent / balance fully drained;
-        // closing the window early only re-requires {requestSweep}, it cannot strand funds.
+        uint256 remaining = sweepCap - amount;
+        // Slither incorrect-equality: `balanceOf == 0` is an exact fully-drained sentinel; closing the
+        // window early only re-requires {requestSweep}, it cannot strand funds.
         // slither-disable-next-line incorrect-equality
-        if (sweepCap == 0 || usdc.balanceOf(address(this)) == 0) {
-            sweepableAt = 0; // armed budget spent or fully drained: close the window
-            sweepCap = 0;
+        if (remaining < MIN_SWEEP_AMOUNT || usdc.balanceOf(address(this)) == 0) {
+            sweepableAt = 0; // budget unburnable or fully drained: close the window
+            sweepCap = 0; // a sub-minimum remainder is not kept armed — it joins the next deposit
+        } else {
+            sweepCap = remaining;
         }
     }
 
@@ -319,8 +340,8 @@ contract DepositForwarder {
     }
 
     /// @dev Settle `amount`: optionally collect fees, then burn the rest to the recipient via CCTP. Clearing
-    ///      the escape countdown is left to the caller — {flush} and {sweep} each clear it once the armed
-    ///      `sweepCap` budget is spent or the balance is fully drained.
+    ///      the escape countdown is left to the caller — {flush} and {sweep} each clear it once the remaining
+    ///      armed `sweepCap` budget drops below `MIN_SWEEP_AMOUNT` or the balance is fully drained.
     /// @param usdc The USDC token (passed in by the caller, which already read it — avoids a re-read).
     /// @param amount Amount to settle (`0 < amount <= balance`).
     /// @param chargeFees Whether to collect fees. {flush} passes `true`; {sweep} passes `false` so the
