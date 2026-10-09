@@ -29,8 +29,8 @@ contract DepositForwarder {
     ///      Ref: https://developers.circle.com/cctp/concepts/finality-and-block-confirmations
     uint32 internal constant FINALITY_STANDARD = 2000;
     uint32 internal constant FINALITY_FAST = 1000;
-    /// @dev Denominator for the proportional fee (`feeBps` is in millionths).
-    uint256 internal constant BPS_DENOM = 1e6;
+    /// @dev Denominator for every proportional rate (`feePpm` and the CCTP allowances are in ppm: 1e6 = 100%).
+    uint256 internal constant PPM_DENOM = 1e6;
 
     /// @notice The shared per-chain config (baked into the implementation, read by every clone).
     IDepositConfig public immutable config;
@@ -53,7 +53,7 @@ contract DepositForwarder {
     /// @param caller The settler.
     /// @param settled Amount settled (`setupFee + perSettleFee + burned`).
     /// @param setupFee One-time setup fee charged this settlement (0 if already paid, or fee-free sweep).
-    /// @param perSettleFee Per-settlement fee — `baseFee + settled × feeBps` (0 on a fee-free sweep).
+    /// @param perSettleFee Per-settlement fee — `baseFee + settled × feePpm` (0 on a fee-free sweep).
     /// @param burned Amount burned via CCTP to the recipient.
     /// @param viaSweep True if this was the permissionless escape hatch ({sweep}); false for a {flush}.
     /// @param fast True if this settlement actually used a CCTP fast transfer (finality 1000); false for
@@ -121,12 +121,12 @@ contract DepositForwarder {
     function _cctpParams(uint256 toBurn, bool useFast) internal view returns (uint32 finality, uint256 maxFee) {
         finality = useFast ? FINALITY_FAST : FINALITY_STANDARD;
         uint256 rate =
-            _min(useFast ? config.cctpFastMaxFeeBps() : config.cctpStandardMaxFeeBps(), config.maxCctpFeeBps());
+            _min(useFast ? config.cctpFastMaxFeePpm() : config.cctpStandardMaxFeePpm(), config.maxCctpFeePpm());
         // Round the allowance UP for a non-zero rate: CCTP's TokenMessengerV2 floors a non-zero proportional
         // fee to a 1-subunit minimum (`_calcMinFeeAmount`), so a maxFee that floored to 0 on a small burn
         // would be "Insufficient max fee" and revert. maxFee is only a ceiling (the actual fee, <= maxFee,
         // is what's charged), so rounding up costs nothing.
-        uint256 fee = rate == 0 ? 0 : (toBurn * rate + BPS_DENOM - 1) / BPS_DENOM;
+        uint256 fee = rate == 0 ? 0 : (toBurn * rate + PPM_DENOM - 1) / PPM_DENOM;
         // CCTP also requires maxFee < amount (unconditional). At toBurn == 1 a non-zero allowance ceils to
         // maxFee == toBurn and would revert there — even when Circle's ACTUAL fee is 0 (the allowance is only
         // a ceiling, not the charged fee), where a zero maxFee settles fine (e.g. a 1-subunit dust sweep with
@@ -332,17 +332,17 @@ contract DepositForwarder {
     }
 
     /// @dev Compute and transfer the fees for settling `settled`: a one-time `setupFee` plus the
-    ///      per-settlement fee (`baseFee + settled × feeBps / 1e6`), each clamped to its cap, sent in one
+    ///      per-settlement fee (`baseFee + settled × feePpm / 1e6`), each clamped to its cap, sent in one
     ///      transfer to the fee collector. `baseFee` is a flat per-settlement charge; it cannot be multiplied
     ///      by splitting because {flush} has no caller-chosen amount (it settles the whole balance).
     /// @param usdc The USDC token (passed in to avoid a re-read).
     /// @param settled Amount being settled.
     /// @return setupFee One-time setup fee charged here (0 if already paid).
-    /// @return perSettleFee Per-settlement fee (`baseFee + settled × feeBps`); `setupFee + perSettleFee < settled`.
+    /// @return perSettleFee Per-settlement fee (`baseFee + settled × feePpm`); `setupFee + perSettleFee < settled`.
     function _collectFees(IERC20 usdc, uint256 settled) internal returns (uint256 setupFee, uint256 perSettleFee) {
         setupFee = setupFeePaid ? 0 : _min(config.setupFee(), config.maxSetupFee());
-        perSettleFee = _min(config.baseFee(), config.maxBaseFee()) + settled * _min(config.feeBps(), config.maxFeeBps())
-            / BPS_DENOM;
+        perSettleFee = _min(config.baseFee(), config.maxBaseFee()) + settled * _min(config.feePpm(), config.maxFeePpm())
+            / PPM_DENOM;
         uint256 total = setupFee + perSettleFee;
         require(total < settled, "fee exceeds settled");
         if (!setupFeePaid) setupFeePaid = true;

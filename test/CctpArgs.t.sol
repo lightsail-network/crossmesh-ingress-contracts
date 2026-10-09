@@ -49,21 +49,21 @@ contract CctpArgsTest is Base {
     }
 
     /// A FAST address (fast=true) settles at finality 1000, and its maxFee scales with the FAST allowance:
-    /// maxFee = toBurn x cctpFastMaxFeeBps / 1e6 (independent of the standard allowance).
+    /// maxFee = toBurn x cctpFastMaxFeePpm / 1e6 (independent of the standard allowance).
     function test_fast_address_uses_fast_finality_and_fee() public {
-        config.setCctpFastMaxFeeBps(1400); // 0.14% — Circle's 14 bps x 100 (millionths)
+        config.setCctpFastMaxFeePpm(1400); // 0.14% — Circle's 14 bps x 100 (millionths)
         config.setFastEnabled(true);
         usdc.mint(factory.computeAddress(_r(), 8, true), 100e6);
         factory.deployAndFlush(_r(), 8, true);
         require(tm.lastFinality() == 1000, "fast address -> finality 1000");
         uint256 toBurn = 100e6 - (SETUP + BASE + _pct(100e6));
-        require(tm.lastMaxFee() == (toBurn * 1400 + 1e6 - 1) / 1e6, "fast maxFee = ceil(toBurn x fastBps / 1e6)");
+        require(tm.lastMaxFee() == (toBurn * 1400 + 1e6 - 1) / 1e6, "fast maxFee = ceil(toBurn x fastPpm / 1e6)");
     }
 
     /// Governance kill-switch: a fast address settles via STANDARD while fastEnabled is false (the default),
     /// so funds keep flowing if fast breaks (unsupported chain / fee spike) instead of stranding.
     function test_fast_disabled_settles_standard() public {
-        config.setCctpFastMaxFeeBps(1400); // configured, but...
+        config.setCctpFastMaxFeePpm(1400); // configured, but...
         // fastEnabled left false (default)
         usdc.mint(factory.computeAddress(_r(), 8, true), 100e6);
         factory.deployAndFlush(_r(), 8, true);
@@ -82,7 +82,7 @@ contract CctpArgsTest is Base {
         c2.setOperator(address(this), true);
         c2.setFactory(address(f2));
         c2.setFeeCollector(FEE);
-        c2.setCctpFastMaxFeeBps(1); // 1 millionth → floors to 0 for any toBurn < 1e6
+        c2.setCctpFastMaxFeePpm(1); // 1 millionth → floors to 0 for any toBurn < 1e6
         c2.setFastEnabled(true);
 
         address addr = f2.computeAddress(_r(), 1, true); // fast
@@ -101,7 +101,7 @@ contract CctpArgsTest is Base {
         c2.setOperator(address(this), true);
         c2.setFactory(address(f2));
         c2.setFeeCollector(FEE);
-        c2.setCctpStandardMaxFeeBps(100); // non-zero standard buffer (Circle's actual standard fee is 0)
+        c2.setCctpStandardMaxFeePpm(100); // non-zero standard buffer (Circle's actual standard fee is 0)
 
         address addr = f2.computeAddress(_r(), 1, false); // standard, no service fee on c2
         usdc.mint(addr, 1); // toBurn == 1

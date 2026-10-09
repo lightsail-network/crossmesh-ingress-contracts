@@ -34,7 +34,7 @@ contract SweepTest is Base {
     /// operator's flush on the same address still uses the committed FAST mode.
     function test_fast_address_sweep_uses_standard_finality() public {
         address fwd = factory.deploy(_r(), 3, true); // a FAST address
-        config.setCctpFastMaxFeeBps(1400);
+        config.setCctpFastMaxFeePpm(1400);
         config.setFastEnabled(true);
 
         usdc.mint(fwd, 50e6);

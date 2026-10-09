@@ -40,7 +40,7 @@ abstract contract Base {
 
     uint256 constant SETUP = 10e6; // 10 USDC setup fee
     uint256 constant BASE = 1e6; // 1 USDC base fee
-    uint256 constant BPS = 100; // 0.01% proportional (/1e6)
+    uint256 constant PPM = 100; // 0.01% proportional (/1e6)
     uint256 constant DELAY = 1 hours; // sweep delay
 
     MockUSDC usdc;
@@ -67,7 +67,7 @@ abstract contract Base {
         config.setSweepDelay(DELAY);
         config.setSetupFee(SETUP);
         config.setBaseFee(BASE);
-        config.setFeeBps(BPS);
+        config.setFeePpm(PPM);
     }
 
     /// A valid Stellar G-strkey (56 bytes) — the default recipient.
@@ -80,9 +80,9 @@ abstract contract Base {
         return bytes("GCMFK7IX36RD5LS32SXTC33DR37A4VM3TYO5T4RDWJMVAQV3MJDCEODW");
     }
 
-    /// The proportional fee on `amount` at the configured `BPS`.
+    /// The proportional fee on `amount` at the configured `PPM`.
     function _pct(uint256 amount) internal pure returns (uint256) {
-        return (amount * BPS) / 1e6;
+        return (amount * PPM) / 1e6;
     }
 
     /// True iff a low-level call to `target` with `data` reverts. Lets the suites assert reverts without a

@@ -25,9 +25,9 @@ contract Config is IDepositConfig {
     // --- immutable caps (verifiable worst case; documented on IDepositConfig) ---
     uint256 public constant override maxSetupFee = 100e6; // 100 USDC
     uint256 public constant override maxBaseFee = 100e6; // 100 USDC
-    uint256 public constant override maxFeeBps = 10_000; // 1% (of 1e6)
+    uint256 public constant override maxFeePpm = 10_000; // 1% — ppm: 1e6 = 100%, 1 bp = 100 ppm
     uint256 public constant override maxSweepDelay = 7 days;
-    uint256 public constant override maxCctpFeeBps = 10_000; // 1% (of 1e6) — ceiling on the CCTP fee rate
+    uint256 public constant override maxCctpFeePpm = 10_000; // 1% (ppm) — ceiling on the CCTP fee rate
 
     /// @notice Governance address; the only caller of {init} and the setters.
     address public owner;
@@ -37,9 +37,9 @@ contract Config is IDepositConfig {
     // --- owner-tunable values, each clamped to its cap (documented on IDepositConfig) ---
     uint256 public override setupFee;
     uint256 public override baseFee;
-    uint256 public override feeBps;
-    uint256 public override cctpStandardMaxFeeBps; // standard-burn CCTP fee allowance (millionths); 0 today
-    uint256 public override cctpFastMaxFeeBps; // fast-burn CCTP fee allowance (millionths); covers the chain's fast fee
+    uint256 public override feePpm;
+    uint256 public override cctpStandardMaxFeePpm; // standard-burn CCTP fee allowance (millionths); 0 today
+    uint256 public override cctpFastMaxFeePpm; // fast-burn CCTP fee allowance (millionths); covers the chain's fast fee
     bool public override fastEnabled; // chain-level master switch: fast addresses settle fast only while true
     bool public override publicFlush; // access switch: while true, anyone may flush (fees still apply)
     address public override feeCollector;
@@ -62,12 +62,12 @@ contract Config is IDepositConfig {
     event SetupFeeSet(uint256 setupFee);
     /// @notice Emitted when the base fee is set.
     event BaseFeeSet(uint256 baseFee);
-    /// @notice Emitted when the proportional fee (millionths of 1e6) is set.
-    event FeeBpsSet(uint256 feeBps);
+    /// @notice Emitted when the proportional fee (ppm, 1e6 = 100%) is set.
+    event FeePpmSet(uint256 feePpm);
     /// @notice Emitted when the standard-burn CCTP fee allowance is set.
-    event CctpStandardMaxFeeBpsSet(uint256 cctpStandardMaxFeeBps);
+    event CctpStandardMaxFeePpmSet(uint256 cctpStandardMaxFeePpm);
     /// @notice Emitted when the fast-burn CCTP fee allowance is set.
-    event CctpFastMaxFeeBpsSet(uint256 cctpFastMaxFeeBps);
+    event CctpFastMaxFeePpmSet(uint256 cctpFastMaxFeePpm);
     /// @notice Emitted when the fast master switch is toggled.
     event FastEnabledSet(bool fastEnabled);
     /// @notice Emitted when the flush access switch is toggled.
@@ -127,38 +127,38 @@ contract Config is IDepositConfig {
     }
 
     /// @notice Set the per-settlement proportional fee.
-    /// @param value New fee in millionths of the settled amount; must be `<= maxFeeBps`.
-    function setFeeBps(uint256 value) external onlyOwner {
-        require(value <= maxFeeBps, "above cap");
-        feeBps = value;
-        emit FeeBpsSet(value);
+    /// @param value New fee in millionths of the settled amount; must be `<= maxFeePpm`.
+    function setFeePpm(uint256 value) external onlyOwner {
+        require(value <= maxFeePpm, "above cap");
+        feePpm = value;
+        emit FeePpmSet(value);
     }
 
     /// @notice Set the CCTP fee allowance for STANDARD burns (millionths of the burned amount). Standard
     ///         transfers are free today, so 0 is fine; a small non-zero buffer keeps flushes alive if Circle
     ///         ever introduces a standard fee (otherwise the burn's maxFee is too low and the burn reverts).
-    /// @param value New allowance; must be `<= maxCctpFeeBps`.
-    function setCctpStandardMaxFeeBps(uint256 value) external onlyOwner {
-        require(value <= maxCctpFeeBps, "above cap");
-        cctpStandardMaxFeeBps = value;
-        emit CctpStandardMaxFeeBpsSet(value);
+    /// @param value New allowance; must be `<= maxCctpFeePpm`.
+    function setCctpStandardMaxFeePpm(uint256 value) external onlyOwner {
+        require(value <= maxCctpFeePpm, "above cap");
+        cctpStandardMaxFeePpm = value;
+        emit CctpStandardMaxFeePpmSet(value);
     }
 
     /// @notice Set the CCTP fee allowance for FAST burns (millionths of the burned amount). Must cover the
     ///         source chain's current fast-transfer fee, or the fast burn reverts for too low a maxFee. The
     ///         unit is MILLIONTHS, not basis points — Circle quotes the fee in bps, so multiply by 100
     ///         (e.g. Circle's 14 bps → 1400). Fees: https://developers.circle.com/cctp/concepts/fees
-    /// @param value New allowance; must be `<= maxCctpFeeBps`.
-    function setCctpFastMaxFeeBps(uint256 value) external onlyOwner {
-        require(value <= maxCctpFeeBps, "above cap");
-        cctpFastMaxFeeBps = value;
-        emit CctpFastMaxFeeBpsSet(value);
+    /// @param value New allowance; must be `<= maxCctpFeePpm`.
+    function setCctpFastMaxFeePpm(uint256 value) external onlyOwner {
+        require(value <= maxCctpFeePpm, "above cap");
+        cctpFastMaxFeePpm = value;
+        emit CctpFastMaxFeePpmSet(value);
     }
 
     /// @notice Chain-level master switch for CCTP fast transfers. A fast-flagged deposit address settles
     ///         fast ONLY while this is true; when false, even fast addresses settle via standard (free,
     ///         universally available). Enable only after confirming the chain supports fast and
-    ///         `cctpFastMaxFeeBps` covers its fee; flip off as a kill-switch if fast breaks (unsupported,
+    ///         `cctpFastMaxFeePpm` covers its fee; flip off as a kill-switch if fast breaks (unsupported,
     ///         fee spike past the cap) so funds keep settling via standard instead of stranding.
     /// @param value True to allow fast settlement on this chain, false to force standard.
     function setFastEnabled(bool value) external onlyOwner {

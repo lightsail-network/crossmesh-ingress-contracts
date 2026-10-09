@@ -65,11 +65,11 @@ interface IDepositConfig {
     /// @notice Upper bound on the per-settlement base fee.
     function maxBaseFee() external view returns (uint256);
     /// @notice Upper bound on the per-settlement proportional fee, in millionths (1e6 = 100%).
-    function maxFeeBps() external view returns (uint256);
+    function maxFeePpm() external view returns (uint256);
     /// @notice Upper bound on the self-rescue delay (the longest the operator can be given priority).
     function maxSweepDelay() external view returns (uint256);
     /// @notice Upper bound on the CCTP fee rate passed per burn, in millionths of the burned amount.
-    function maxCctpFeeBps() external view returns (uint256);
+    function maxCctpFeePpm() external view returns (uint256);
 
     // --- owner-tunable values, each clamped to its cap ---
 
@@ -78,15 +78,15 @@ interface IDepositConfig {
     /// @notice Current per-settlement base fee.
     function baseFee() external view returns (uint256);
     /// @notice Current per-settlement proportional fee, in millionths of the settled amount.
-    function feeBps() external view returns (uint256);
+    function feePpm() external view returns (uint256);
     /// @notice CCTP fee allowance for STANDARD burns, in millionths of the burned amount: the on-chain
-    ///         `maxFee` is `toBurn × cctpStandardMaxFeeBps / 1e6`. Standard transfers are free today, so 0
+    ///         `maxFee` is `toBurn × cctpStandardMaxFeePpm / 1e6`. Standard transfers are free today, so 0
     ///         is fine; a small buffer guards against a future standard fee.
-    function cctpStandardMaxFeeBps() external view returns (uint256);
+    function cctpStandardMaxFeePpm() external view returns (uint256);
     /// @notice CCTP fee allowance for FAST burns, in millionths of the burned amount: the on-chain `maxFee`
-    ///         is `toBurn × cctpFastMaxFeeBps / 1e6`. Must cover the chain's fast fee (Circle quotes bps, so
+    ///         is `toBurn × cctpFastMaxFeePpm / 1e6`. Must cover the chain's fast fee (Circle quotes bps, so
     ///         ×100: 14 bps → 1400). Which allowance applies is committed per-address in the clone's args.
-    function cctpFastMaxFeeBps() external view returns (uint256);
+    function cctpFastMaxFeePpm() external view returns (uint256);
     /// @notice Chain-level master switch: a fast-flagged address settles fast only while true, else standard.
     function fastEnabled() external view returns (bool);
     /// @notice Access switch for {DepositForwarder.flush}: false (default) = operator/factory only;

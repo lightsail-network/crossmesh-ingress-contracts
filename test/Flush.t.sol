@@ -8,7 +8,7 @@ import {DepositForwarder} from "../src/DepositForwarder.sol";
 /// access control, the Settled event, and the interaction with a pending escape window. What actually
 /// reaches Circle (finality, maxFee, hookData, call args) lives in CctpArgs.t.sol.
 contract FlushTest is Base {
-    /// First settlement collects setup + base + amount×bps; burn(amount − fee) → recipient.
+    /// First settlement collects setup + base + amount×ppm; burn(amount − fee) → recipient.
     function test_flush_collects_all_three_fees() public {
         address addr = factory.computeAddress(_r(), 1, false);
         usdc.mint(addr, 100e6);
@@ -87,7 +87,7 @@ contract FlushTest is Base {
     /// The Settled event reports the EFFECTIVE mode actually used (not just the address flag): a fast address
     /// emits fast=true while enabled, fast=false once governance disables fast.
     function test_settled_event_reports_effective_fast() public {
-        config.setCctpFastMaxFeeBps(1400);
+        config.setCctpFastMaxFeePpm(1400);
         config.setFastEnabled(true);
         address addr = factory.computeAddress(_r(), 8, true);
         usdc.mint(addr, 100e6);

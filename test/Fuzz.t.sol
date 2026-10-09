@@ -9,21 +9,21 @@ import {DepositForwarder} from "../src/DepositForwarder.sol";
 contract FuzzTest is Base {
     /// ∀ fee configs within their caps and any deposit: flush either reverts — exactly when the total fee
     /// would consume the settlement — or conserves value: burned + collected == settled, fees < settled.
-    function testFuzz_flush_fee_invariants(uint256 setup, uint256 base, uint256 bps, uint256 amount) public {
+    function testFuzz_flush_fee_invariants(uint256 setup, uint256 base, uint256 ppm, uint256 amount) public {
         setup %= 100e6 + 1; // ≤ maxSetupFee
         base %= 100e6 + 1; // ≤ maxBaseFee
-        bps %= 10_000 + 1; // ≤ maxFeeBps
+        ppm %= 10_000 + 1; // ≤ maxFeePpm
         amount = amount % 1_000_000e6 + 1; // 1 subunit .. 1M USDC (below the mock burn limit)
         config.setSetupFee(setup);
         config.setBaseFee(base);
-        config.setFeeBps(bps);
+        config.setFeePpm(ppm);
 
         address fwd = factory.deploy(_r(), 77, false);
         usdc.mint(fwd, amount);
         uint256 feeBefore = usdc.balanceOf(FEE);
 
         (bool ok,) = fwd.call(abi.encodeWithSignature("flush()"));
-        uint256 expectedFee = setup + base + (amount * bps) / 1e6;
+        uint256 expectedFee = setup + base + (amount * ppm) / 1e6;
         if (ok) {
             uint256 collected = usdc.balanceOf(FEE) - feeBefore;
             require(collected == expectedFee, "collected == configured fee");
@@ -37,17 +37,17 @@ contract FuzzTest is Base {
 
     /// ∀ CCTP allowance rates within the cap, any amount, fast or standard: the maxFee allowance handed to
     /// CCTP stays STRICTLY below the burn amount (Circle requires maxFee < amount unconditionally).
-    function testFuzz_cctp_maxfee_below_burn(uint256 amount, uint256 stdBps, uint256 fastBps, bool fastAddr) public {
-        stdBps %= 10_000 + 1; // ≤ maxCctpFeeBps
-        fastBps %= 10_000 + 1;
+    function testFuzz_cctp_maxfee_below_burn(uint256 amount, uint256 stdPpm, uint256 fastPpm, bool fastAddr) public {
+        stdPpm %= 10_000 + 1; // ≤ maxCctpFeePpm
+        fastPpm %= 10_000 + 1;
         amount = amount % 1_000_000e6 + 1;
-        config.setCctpStandardMaxFeeBps(stdBps);
-        config.setCctpFastMaxFeeBps(fastBps);
+        config.setCctpStandardMaxFeePpm(stdPpm);
+        config.setCctpFastMaxFeePpm(fastPpm);
         config.setFastEnabled(true);
         // Zero the service fees so even 1-subunit deposits settle and toBurn == amount.
         config.setSetupFee(0);
         config.setBaseFee(0);
-        config.setFeeBps(0);
+        config.setFeePpm(0);
 
         address fwd = factory.deploy(_r(), 78, fastAddr);
         usdc.mint(fwd, amount);

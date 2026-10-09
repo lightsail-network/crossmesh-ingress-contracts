@@ -37,7 +37,7 @@ Two settlement entrypoints, both flowing through internal `_settle`, **neither t
 caller-chosen amount or destination**:
 
 - `flush()` — operator/factory only; settles `min(balance, cctpBurnLimit)`; charges the service
-  fees (one-time `setupFee` + `baseFee` + `settled × feeBps`, each clamped by an immutable cap).
+  fees (one-time `setupFee` + `baseFee` + `settled × feePpm / 1e6`, each clamped by an immutable cap).
 - `sweep()` — the permissionless escape hatch: anyone may `requestSweep()` (balance > 0), and
   after `sweepDelay` (≤ immutable `maxSweepDelay` = 7 days) anyone may `sweep()` **fee-free**,
   settling `min(balance, sweepCap, cctpBurnLimit)` to the same committed recipient. Sweeps always
@@ -265,7 +265,7 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   `initialized` flag); immutable thereafter. Governing rule documented in `Config`: only values
   that provably cannot redirect USDC may be mutable.
 - **Tamper.3.R.1** — Immutable caps clamp every tunable: `maxSetupFee`/`maxBaseFee` 100 USDC,
-  `maxFeeBps` 1%, `maxSweepDelay` 7 days, `maxCctpFeeBps` 1%. A depositor can verify the worst
+  `maxFeePpm` 1%, `maxSweepDelay` 7 days, `maxCctpFeePpm` 1%. A depositor can verify the worst
   case on-chain before funding.
 - **Tamper.4.R.1** — `hookData` is built on-chain (`_hookData`) from the committed immutable args
   with a fixed 32-byte frame matching Circle's published hookData layout byte-for-byte; no

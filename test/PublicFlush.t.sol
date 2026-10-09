@@ -37,7 +37,7 @@ contract PublicFlushTest is Base {
     function test_public_flush_with_zero_fees_is_free_settlement() public {
         config.setSetupFee(0);
         config.setBaseFee(0);
-        config.setFeeBps(0);
+        config.setFeePpm(0);
         config.setPublicFlush(true);
         usdc.mint(factory.computeAddress(_r(), 2, false), 50e6);
 
@@ -52,7 +52,7 @@ contract PublicFlushTest is Base {
     /// Orthogonality with fast: a public flush still honors the fast config — governance turns
     /// `fastEnabled` off separately if a wind-down should stop paying Circle's fast fee.
     function test_public_flush_still_honors_fast_config() public {
-        config.setCctpFastMaxFeeBps(1400);
+        config.setCctpFastMaxFeePpm(1400);
         config.setFastEnabled(true);
         config.setPublicFlush(true);
         address fwd = factory.deploy(_r(), 3, true); // fast address

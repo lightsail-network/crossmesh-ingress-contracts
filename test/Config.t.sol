@@ -18,13 +18,13 @@ contract ConfigTest is Base {
         require(
             _reverts(address(config), abi.encodeWithSignature("setBaseFee(uint256)", uint256(100e6 + 1))), "base cap"
         );
-        require(_reverts(address(config), abi.encodeWithSignature("setFeeBps(uint256)", uint256(10_001))), "bps cap");
+        require(_reverts(address(config), abi.encodeWithSignature("setFeePpm(uint256)", uint256(10_001))), "ppm cap");
         require(
-            _reverts(address(config), abi.encodeWithSignature("setCctpStandardMaxFeeBps(uint256)", uint256(10_001))),
+            _reverts(address(config), abi.encodeWithSignature("setCctpStandardMaxFeePpm(uint256)", uint256(10_001))),
             "cctp standard cap"
         );
         require(
-            _reverts(address(config), abi.encodeWithSignature("setCctpFastMaxFeeBps(uint256)", uint256(10_001))),
+            _reverts(address(config), abi.encodeWithSignature("setCctpFastMaxFeePpm(uint256)", uint256(10_001))),
             "cctp fast cap"
         );
         require(
