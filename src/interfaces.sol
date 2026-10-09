@@ -13,14 +13,18 @@ interface ITokenMessengerV2 {
     /// @param mintRecipient Destination mint recipient as bytes32 (the Stellar forwarder).
     /// @param burnToken Token to burn on this chain (USDC).
     /// @param destinationCaller Address allowed to receive on the destination (the Stellar forwarder).
-    /// @param maxFee Max CCTP fee the caller accepts (deducted from `amount`). With `minFinalityThreshold`
-    ///        >= 2000 (standard) the fee is 0 today; with <= 1000 (fast) it must cover the chain's fast fee
-    ///        or the burn reverts. Fast fees can change — see https://developers.circle.com/cctp/concepts/fees
-    /// @param minFinalityThreshold Finality threshold: >= 2000 = standard (finalized, free), <= 1000 = fast
-    ///        (confirmed, charges a fee). This forwarder passes 1000 only when ALL of: the clone committed
-    ///        to fast, the settlement is a fee-charging {DepositForwarder.flush} (never {sweep}), and
-    ///        `IDepositConfig.fastEnabled()` is on; otherwise 2000. The committed flag alone does not decide
-    ///        the mode — governance can downgrade every fast address to standard at any time.
+    /// @param maxFee Max CCTP fee the caller accepts (deducted from `amount`). Checked ON-CHAIN only as
+    ///        `maxFee < amount` and — on implementations with a non-zero `minFee` —
+    ///        `maxFee >= getMinFeeAmount(amount)` ({ITokenMessengerV2MinFee}), at every finality. A shortfall
+    ///        against Circle's quoted FAST fee does not revert the burn: Circle's attestation decides OFF-CHAIN
+    ///        whether the allowance buys fast delivery and documents that such a transfer MAY be degraded to
+    ///        standard. Standard transfers are free today; fast fees can change — see
+    ///        https://developers.circle.com/cctp/concepts/fees
+    /// @param minFinalityThreshold The REQUESTED minimum finality: 1000 makes the message eligible for fast
+    ///        attestation (charges a fee), 2000 requests finalized attestation (free). It is not the delivered
+    ///        finality (see `maxFee`). This forwarder passes 1000 only when ALL of: the clone committed to fast,
+    ///        the settlement is a fee-charging {DepositForwarder.flush} (never {sweep}), and
+    ///        `IDepositConfig.fastEnabled()` is on; otherwise 2000.
     ///        See https://developers.circle.com/cctp/concepts/finality-and-block-confirmations
     /// @param hookData Post-mint hook payload (here: the committed Stellar recipient).
     function depositForBurnWithHook(
@@ -46,9 +50,10 @@ interface ITokenMessengerV2 {
 ///         The forwarder therefore probes it via a tolerant `staticcall` ({DepositForwarder-_cctpMinFee}),
 ///         never through this interface directly — a direct call would revert where the function is absent.
 interface ITokenMessengerV2MinFee {
-    /// @notice The minimum `maxFee` TokenMessengerV2 accepts for burning `amount`: `amount × minFee / 1e6`,
-    ///         floored to 1 subunit when `minFee` is non-zero; a burn whose `maxFee` is below it reverts
-    ///         with "Insufficient max fee".
+    /// @notice The minimum `maxFee` TokenMessengerV2 accepts for burning `amount`: `amount × minFee / 1e7`
+    ///         (`minFee` is in units of `MIN_FEE_MULTIPLIER = 1e7`), floored to 1 subunit when `minFee` is
+    ///         non-zero; a burn whose `maxFee` is below it reverts with "Insufficient max fee", at any finality.
+    ///         The getter itself reverts ("Amount too low") for `amount <= 1` while `minFee` is non-zero.
     /// @param amount The burn amount (token decimals; USDC = 6).
     /// @return The minimum acceptable `maxFee` for `amount`.
     function getMinFeeAmount(uint256 amount) external view returns (uint256);
@@ -101,19 +106,22 @@ interface IDepositConfig {
     function baseFee() external view returns (uint256);
     /// @notice Current per-settlement proportional fee, in millionths of the settled amount.
     function feePpm() external view returns (uint256);
-    /// @notice CCTP fee allowance for STANDARD burns, in millionths of the burned amount. The on-chain
-    ///         `maxFee` for a non-zero rate is `min(ceil(toBurn × min(rate, maxCctpFeePpm) / 1e6), toBurn − 1)`
-    ///         (0 for a zero rate) — see {DepositForwarder-_cctpParams}. Standard transfers are free today,
-    ///         so 0 is fine; a small buffer guards against a future standard fee.
+    /// @notice CCTP fee allowance for STANDARD burns, in millionths of the burned amount. The forwarder
+    ///         rounds `toBurn × min(rate, maxCctpFeePpm) / 1e6` up, lifts it to the messenger's on-chain
+    ///         minimum fee, bounds it by the cap, then clamps it below `toBurn` — so a zero rate can still
+    ///         yield a non-zero `maxFee`. See {DepositForwarder-_cctpParams}. Standard transfers are free
+    ///         today, so 0 is fine.
     function cctpStandardMaxFeePpm() external view returns (uint256);
     /// @notice CCTP fee allowance for FAST burns, in millionths of the burned amount; same `maxFee` formula
-    ///         as the standard allowance. Must cover the chain's fast fee (Circle quotes bps, so ×100:
-    ///         14 bps → 1400). Which allowance applies follows the EFFECTIVE mode, not the clone's flag alone:
-    ///         fast only for a fee-charging flush of a fast-committed clone while {fastEnabled} is on; a
-    ///         sweep, or fast disabled, uses the standard allowance.
+    ///         as the standard allowance. Should cover the chain's fast fee (Circle quotes bps, so ×100:
+    ///         14 bps → 1400) — not enforced on-chain: a shortfall does not revert the burn, and Circle
+    ///         documents that the transfer may then be degraded to standard. Which allowance applies
+    ///         follows the effective mode, not the clone's flag alone: fast only for a fee-charging flush
+    ///         of a fast-committed clone while {fastEnabled} is on; a sweep, or fast disabled, uses the
+    ///         standard allowance.
     function cctpFastMaxFeePpm() external view returns (uint256);
-    /// @notice Chain-level master switch: a fast-flagged address settles fast only while true, else standard.
-    ///         Governance can flip it at any time, silently downgrading every fast address to standard.
+    /// @notice Chain-level master switch: a fast-flagged address REQUESTS fast only while true, else standard.
+    ///         Governance can flip it at any time; it governs future burns only, never messages already burned.
     function fastEnabled() external view returns (bool);
     /// @notice Access switch for {DepositForwarder.flush}: false (default) = operator/factory only;
     ///         true = anyone may flush (and use the factory's one-tx deployAndFlush). Fees still apply

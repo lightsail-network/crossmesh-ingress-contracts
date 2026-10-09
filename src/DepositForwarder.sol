@@ -71,9 +71,11 @@ contract DepositForwarder {
     /// @param perSettleFee Per-settlement fee — `baseFee + settled × feePpm` (0 on a fee-free sweep).
     /// @param burned Amount burned via CCTP to the recipient.
     /// @param viaSweep True if this was the permissionless escape hatch ({sweep}); false for a {flush}.
-    /// @param fast True if this settlement actually used a CCTP fast transfer (finality 1000); false for
-    ///        standard. Reflects the EFFECTIVE mode, not just the address flag: a sweep, or fast disabled on
-    ///        the chain, settles standard even at a fast address.
+    /// @param fast True if this settlement REQUESTED a CCTP fast transfer (finality 1000); false for
+    ///        standard. Reflects the effective request, not just the address flag: a sweep, or fast disabled
+    ///        on the chain, requests standard even at a fast address. Neither the DELIVERED finality nor the
+    ///        executed CCTP fee is recorded here: Circle's attestation decides both off-chain (an under-funded
+    ///        fast request may be degraded to standard) and they surface only in the attested message.
     event Settled(
         address indexed caller,
         uint256 settled,
@@ -114,8 +116,10 @@ contract DepositForwarder {
         return _recipient();
     }
 
-    /// @notice Whether this address settles via a CCTP fast transfer (committed in the clone's args).
-    /// @return True for fast (finality 1000 + fast fee), false for standard (finality 2000, free).
+    /// @notice Whether this address is committed to REQUEST CCTP fast transfers (in the clone's args); the
+    ///         request is made only on a fee-charging {flush} while {IDepositConfig-fastEnabled}.
+    /// @return True if committed to fast (finality 1000 requested, a fast fee may apply), false for standard
+    ///         (2000).
     function fast() external view returns (bool) {
         return _fast();
     }
@@ -140,13 +144,14 @@ contract DepositForwarder {
 
     /// @dev CCTP burn params for a settlement: the finality threshold and the maxFee allowance. The
     ///      allowance is the LARGER of the owner-set rate (`toBurn × feeRate / 1e6`) and the messenger's
-    ///      own on-chain minimum ({_cctpMinFee}), both bounded by the immutable `maxCctpFeePpm` cap, applied
-    ///      rounded UP to a whole subunit (so on tiny burns the bound is coarser than the rate: 1% of 2
-    ///      subunits bounds `maxFee` at 1, which is also the smallest allowance a minimum fee demands) — so a
-    ///      Circle minimum-fee change never depends on the owner updating a rate to keep settlement (and
-    ///      the depositor's {sweep} escape hatch) alive, while a minimum ABOVE the cap halts rather than
-    ///      silently paying it. `useFast` selects fast (confirmed-level attestation, charges a fee) vs
-    ///      standard (finalized, free). {sweep} always passes false — see {_settle}.
+    ///      own on-chain minimum ({_cctpMinFee}), both bounded by the immutable `maxCctpFeePpm` cap and
+    ///      rounded UP to a whole subunit (on tiny burns the bound is coarser than the rate: 1% of 2 subunits
+    ///      bounds `maxFee` at 1, the smallest allowance a minimum fee demands) — so a Circle minimum-fee
+    ///      change never depends on the owner updating a rate to keep settlement (and the depositor's {sweep}
+    ///      escape hatch) alive, while a minimum ABOVE the cap halts rather than silently paying it. `useFast`
+    ///      requests fast (confirmed-level attestation, charges a fee) vs standard (finalized, free); a
+    ///      shortfall against the fast fee does not by itself revert the burn, and a successful burn does not
+    ///      guarantee fast delivery. {sweep} always passes false — see {_settle}.
     ///      Fees: https://developers.circle.com/cctp/concepts/fees
     function _cctpParams(address tokenMessenger, uint256 toBurn, bool useFast)
         internal
@@ -156,10 +161,9 @@ contract DepositForwarder {
         finality = useFast ? FINALITY_FAST : FINALITY_STANDARD;
         uint256 cap = config.maxCctpFeePpm();
         uint256 rate = _min(useFast ? config.cctpFastMaxFeePpm() : config.cctpStandardMaxFeePpm(), cap);
-        // Round the allowance UP (a zero rate still yields 0): CCTP's TokenMessengerV2 floors a non-zero
-        // proportional fee to a 1-subunit minimum (`_calcMinFeeAmount`), so a maxFee that floored to 0 on a
-        // small burn would be "Insufficient max fee" and revert. maxFee is only a ceiling (the actual fee,
-        // <= maxFee, is what's charged), so rounding up costs nothing.
+        // Round the owner allowance UP to whole subunits (a zero rate contributes 0). This sets a ceiling,
+        // not the executed fee, so the extra sub-subunit only widens what Circle may charge, never what it
+        // does charge. The messenger's own minimum is applied below.
         uint256 fee = (toBurn * rate + PPM_DENOM - 1) / PPM_DENOM;
         // Lift the allowance to the messenger's on-chain minimum (0 where it has none), then bound it by
         // the cap: the owner cannot starve settlement by setting a rate below Circle's minimum, and nobody
@@ -178,9 +182,11 @@ contract DepositForwarder {
     /// @dev The messenger's on-chain minimum `maxFee` for burning `toBurn`
     ///      ({ITokenMessengerV2MinFee-getMinFeeAmount}), or 0 where the messenger does not expose it. Probed
     ///      with a tolerant `staticcall` because the selector is absent on older TokenMessengerV2
-    ///      implementations (Ethereum, Base at the time of writing): there the call reverts with empty
-    ///      returndata, and an interface call would revert the whole settlement. Any failure or malformed
-    ///      return falls back to 0, i.e. to the owner-rate allowance alone — exactly the pre-minFee behavior.
+    ///      implementations (Ethereum, Base at the time of writing), where an interface call would revert the
+    ///      whole settlement; any failure or malformed return falls back to 0, i.e. to the owner-rate
+    ///      allowance alone — the pre-minFee behavior. The getter also reverts for `toBurn <= 1` while a
+    ///      minimum is set; the fallback then yields a maxFee the messenger's own check rejects, as intended —
+    ///      a 1-subunit burn is never burnable under a minimum fee (hence `MIN_SWEEP_AMOUNT`).
     function _cctpMinFee(address tokenMessenger, uint256 toBurn) internal view returns (uint256) {
         // Slither low-level-calls: deliberate — the target is the Config-pinned Circle messenger (trusted),
         // and the selector may legitimately be absent, so the call must be allowed to fail (see @dev).
@@ -378,15 +384,16 @@ contract DepositForwarder {
         if (chargeFees) (setupFee, perSettleFee) = _collectFees(usdc, amount);
         uint256 toBurn = amount - setupFee - perSettleFee;
 
-        // Fast applies only when ALL hold: this is a fee-charging {flush} (the permissionless escape hatch
-        // {sweep}, chargeFees=false, ALWAYS uses standard), the address committed to fast, AND governance has
-        // fast enabled on this chain. So a fast address can never be stranded — sweep, a disabled switch, or
-        // a standard fall-back all settle via standard (free, universally available). Self-rescue is
-        // unconditional, and governance can kill fast (unsupported chain / fee spike) without stranding funds.
+        // Fast is REQUESTED only when ALL hold: this is a fee-charging {flush} (the permissionless escape
+        // hatch {sweep}, chargeFees=false, ALWAYS requests standard), the address committed to fast, AND
+        // governance has fast enabled on this chain. Sweep and a disabled switch request standard; an
+        // under-funded fast request may be degraded to standard by Circle — delivery is never guaranteed by
+        // this contract. These rules govern new burns only; once burned, completion rests on Circle's
+        // attestation.
         bool useFast = chargeFees && _fast() && config.fastEnabled();
         _burnViaCctp(usdc, toBurn, useFast);
 
-        // viaSweep == !chargeFees (a sweep takes no fee); `useFast` is the EFFECTIVE mode actually used.
+        // viaSweep == !chargeFees (a sweep takes no fee); `useFast` is the mode REQUESTED from Circle.
         emit Settled(msg.sender, amount, setupFee, perSettleFee, toBurn, !chargeFees, useFast);
     }
 

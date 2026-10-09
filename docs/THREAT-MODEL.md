@@ -275,7 +275,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 ### Repudiation
 
 - **Repudiate.1.R.1** — `Settled` publishes the full split — `settled`, `setupFee`,
-  `perSettleFee`, `burned`, `viaSweep`, and the _effective_ fast mode — for off-chain
+  `perSettleFee`, `burned`, `viaSweep`, and the fast mode _requested_ from Circle (delivered
+  finality and the executed CCTP fee appear only in the attested message) — for off-chain
   reconciliation; every `Config` setter emits an event. On the relayed path
   (`deployAndFlush`) `Settled.caller` is the factory, the clone's `msg.sender`; the factory's
   `FlushRelayed(caller, forwarder)` names the initiating account, paired with `Settled` by
@@ -312,11 +313,20 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   both outcomes deliver the armed funds to the committed recipient.
 - **DoS.3.R.1** — `flush` reverts when fees would consume the settlement (`fee exceeds settled`),
   but `sweep` is fee-free and clamps CCTP `maxFee < toBurn`, so self-rescue works down to
-  1 subunit.
-- **DoS.4.R.1** — Effective fast mode requires _flush ∧ address-committed-fast ∧ `fastEnabled`_;
-  `sweep` always settles via standard finality; `fastEnabled` doubles as a chain-level kill
-  switch. A fast address can never be stranded by fast-fee configuration, and the standard path
-  it falls back to needs no owner-set allowance either (DoS.1.R.1).
+  `MIN_SWEEP_AMOUNT` (2 subunits) — the smallest burn Circle accepts once a minimum fee is set
+  (DoS.7.R.1).
+- **DoS.4.R.1** — Fast is only ever _requested_ for _flush ∧ address-committed-fast ∧
+  `fastEnabled`_; `sweep` always requests standard finality. Fast-fee configuration cannot strand
+  USDC in a deposit address because the reviewed burn implementations do not check the fast fee
+  on-chain at all (only `maxFee < amount` and, where present, the finality-independent minimum
+  fee): the burn succeeds, and Circle documents that an under-funded fast transfer _may_ be
+  degraded to standard — a possible outcome, not a delivery guarantee. Once burned, completion
+  rests on Circle's attestation and destination execution (TB5); `sweep` cannot recover a burned
+  amount. `fastEnabled` therefore stops settlements from requesting (and reporting) a mode Circle
+  would not honor; it governs future burns only and is not a guard against a revert. Note: Circle's
+  fee page also says the burn "will revert on the source blockchain" when the fee exceeds `maxFee`;
+  the deployed code (Ethereum, Base, Arc, verified) has no such check — the code governs here.
+  The standard path needs no owner-set allowance either (DoS.1.R.1).
 - **DoS.5.R.1** — `_burnLimit` probes `burnLimitsPerMessage` and reverts early
   (`burn unsupported`) instead of burning into a dead bridge.
 - **DoS.5.R.2** — _Risk accepted (deliberate trade-off):_ if Circle permanently retired the
@@ -330,9 +340,11 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   give up the "owner cannot redirect principal" property (Elevation.3.R.1). Operational
   mitigation is monitoring Circle's denylist for deposit addresses.
 - **DoS.5.R.4** — _Risk accepted (deliberate trade-off):_ if Circle set a chain's minimum CCTP fee
-  above the immutable `maxCctpFeePpm` cap (1%), the forwarder's allowance stops at the cap and
-  every `flush` and `sweep` on that chain reverts at the messenger ("Insufficient max fee") until
-  the minimum comes back under the cap. Paying an uncapped minimum instead would let a Circle-side
+  above the immutable `maxCctpFeePpm` cap (1%), the forwarder's allowance stops at the cap and a
+  burn reverts at the messenger ("Insufficient max fee") whenever its required minimum exceeds
+  that capped, rounded, `< amount`-clamped allowance — for a rate above the cap, essentially every
+  `flush` and `sweep` on that chain, until the minimum comes back under the cap. Paying an
+  uncapped minimum instead would let a Circle-side
   change (or a permissionless `sweep` caller) impose an unbounded fee on depositors; halting is
   the safer failure. Operational mitigation is monitoring Circle's fee announcements per chain.
 - **DoS.6.R.1** — Settlement takes `min(balance, burnLimit)` per call (`sweep` also bounded by the

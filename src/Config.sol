@@ -146,10 +146,14 @@ contract Config is IDepositConfig {
         emit CctpStandardMaxFeePpmSet(value);
     }
 
-    /// @notice Set the CCTP fee allowance for FAST burns (millionths of the burned amount). Must cover the
-    ///         source chain's current fast-transfer fee, or the fast burn reverts for too low a maxFee. The
-    ///         unit is MILLIONTHS, not basis points — Circle quotes the fee in bps, so multiply by 100
-    ///         (e.g. Circle's 14 bps → 1400). Fees: https://developers.circle.com/cctp/concepts/fees
+    /// @notice Set the CCTP fee allowance for FAST burns (millionths of the burned amount). Should cover the
+    ///         source chain's current fast-transfer fee. This is NOT checked on-chain: the burn accepts any
+    ///         `maxFee < amount` (plus the chain's minimum fee, if any), and Circle's attestation service
+    ///         decides off-chain whether the allowance buys fast delivery — Circle documents that an
+    ///         under-funded fast transfer may be degraded to standard; it is not reverted, and fast
+    ///         delivery is not guaranteed. The unit is MILLIONTHS, not basis points —
+    ///         Circle quotes the fee in bps, so multiply by 100 (e.g. Circle's 14 bps → 1400).
+    ///         Fees: https://developers.circle.com/cctp/concepts/fees
     /// @param value New allowance; must be `<= maxCctpFeePpm`.
     function setCctpFastMaxFeePpm(uint256 value) external onlyOwner {
         require(value <= maxCctpFeePpm, "above cap");
@@ -157,11 +161,14 @@ contract Config is IDepositConfig {
         emit CctpFastMaxFeePpmSet(value);
     }
 
-    /// @notice Chain-level master switch for CCTP fast transfers. A fast-flagged deposit address settles
-    ///         fast ONLY while this is true; when false, even fast addresses settle via standard (free,
-    ///         universally available). Enable only after confirming the chain supports fast and
-    ///         `cctpFastMaxFeePpm` covers its fee; flip off as a kill-switch if fast breaks (unsupported,
-    ///         fee spike past the cap) so funds keep settling via standard instead of stranding.
+    /// @notice Chain-level master switch for CCTP fast transfers. A fast-flagged deposit address REQUESTS
+    ///         fast ONLY while this is true; when false, even fast addresses request standard (free, subject
+    ///         only to the chain's minimum fee and the cap). Enable only after confirming the chain supports
+    ///         fast and `cctpFastMaxFeePpm` covers its fee; flip off if fast is unsupported on the chain or
+    ///         its fee outgrows the cap. The switch is not what keeps funds moving — an under-funded fast
+    ///         request is not rejected on-chain, and Circle documents it may be degraded to standard — it
+    ///         stops settlements from requesting (and `Settled.fast` from reporting) a mode Circle would
+    ///         not honor. It governs future burns only, never messages already burned.
     /// @param value True to allow fast settlement on this chain, false to force standard.
     function setFastEnabled(bool value) external onlyOwner {
         fastEnabled = value;

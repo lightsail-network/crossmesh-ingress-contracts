@@ -19,7 +19,8 @@ contract DepositFactory {
     /// @param forwarder The deployed clone address.
     /// @param recipient The committed Stellar recipient (strkey UTF-8 bytes).
     /// @param index The per-recipient index.
-    /// @param fast Whether this address settles via a CCTP fast transfer (committed in the clone's args).
+    /// @param fast Whether this address is committed to REQUEST CCTP fast transfers (in the clone's args); the
+    ///        request is made only on a fee-charging flush while `fastEnabled` (see `DepositForwarder.fast`).
     event Deployed(address indexed forwarder, bytes recipient, uint256 index, bool fast);
 
     /// @notice Emitted by {deployAndFlush}, naming the account that initiated the relayed settlement. The

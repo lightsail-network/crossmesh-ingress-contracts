@@ -84,9 +84,9 @@ contract FlushTest is Base {
         );
     }
 
-    /// The Settled event reports the EFFECTIVE mode actually used (not just the address flag): a fast address
+    /// The Settled event reports the mode REQUESTED from Circle (not just the address flag): a fast address
     /// emits fast=true while enabled, fast=false once governance disables fast.
-    function test_settled_event_reports_effective_fast() public {
+    function test_settled_event_reports_requested_fast() public {
         config.setCctpFastMaxFeePpm(1400);
         config.setFastEnabled(true);
         address addr = factory.computeAddress(_r(), 8, true);

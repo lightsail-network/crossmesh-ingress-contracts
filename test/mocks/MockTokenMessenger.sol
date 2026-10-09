@@ -19,8 +19,8 @@ contract MockTokenMessenger {
     address public lastCaller;
     uint64 public nonceCounter;
     address public localMinter;
-    /// Circle's on-chain minimum-fee rate (millionths), as in the TokenMessengerV2 implementation live on
-    /// Arc. 0 (the default, and Arc's live value today) = no minimum.
+    /// Circle's on-chain minimum-fee rate in units of MIN_FEE_MULTIPLIER = 1e7 (so 1e5 = 1%), as in the
+    /// TokenMessengerV2 implementation live on Arc. 0 (the default, and Arc's live value today) = no minimum.
     uint256 public minFee;
     /// When true, `getMinFeeAmount` reverts with empty returndata — the behavior of the OLDER implementation
     /// live on Ethereum/Base, where the selector does not exist at all.
@@ -47,7 +47,8 @@ contract MockTokenMessenger {
         probeOverridden = true;
     }
 
-    /// Mirrors TokenMessengerV2's public getter. Reverts (selector-absent style, no reason) in legacy mode.
+    /// Mirrors TokenMessengerV2's public getter: reverts (selector-absent style, no reason) in legacy mode,
+    /// and — like Circle's — refuses `amount <= 1` while a minimum is set.
     function getMinFeeAmount(uint256 amount) external view returns (uint256) {
         require(!legacy);
         if (probeOverridden) {
@@ -56,14 +57,16 @@ contract MockTokenMessenger {
                 return(add(data, 0x20), mload(data))
             }
         }
+        if (minFee == 0) return 0;
+        require(amount > 1, "Amount too low");
         return _calcMinFeeAmount(amount);
     }
 
-    /// Mirrors TokenMessengerV2's `_calcMinFeeAmount`: `amount × minFee / 1e6`, floored to 1 when the rate
-    /// is non-zero (the burn path calls this directly, so a probe override cannot disarm the burn check).
+    /// Mirrors TokenMessengerV2's `_calcMinFeeAmount`: `amount × minFee / 1e7`, floored to 1 when the rate
+    /// is non-zero (no amount guard — the burn path calls this directly).
     function _calcMinFeeAmount(uint256 amount) internal view returns (uint256) {
         if (minFee == 0) return 0;
-        uint256 fee = (amount * minFee) / 1e6;
+        uint256 fee = (amount * minFee) / 1e7;
         return fee == 0 ? 1 : fee;
     }
 

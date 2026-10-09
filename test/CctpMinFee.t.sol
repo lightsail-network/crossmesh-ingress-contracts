@@ -48,7 +48,7 @@ contract CctpMinFeeTest is Base {
     /// Circle turns on a minimum fee; the owner has set NOTHING. flush must still settle, with maxFee lifted
     /// to exactly the on-chain minimum.
     function test_flush_lifts_allowance_to_chain_minimum_without_owner_action() public {
-        tm.setMinFee(200); // 0.02%
+        tm.setMinFee(2_000); // 0.02% (units of 1e7)
         address fwd = _deployFunded(4, AMOUNT);
         DepositForwarder(fwd).flush();
         uint256 settled = AMOUNT - SETUP - BASE - _pct(AMOUNT);
@@ -60,7 +60,7 @@ contract CctpMinFeeTest is Base {
     /// The same for the depositor's escape hatch: sweep (standard, fee-free on our side) settles under a
     /// Circle minimum fee with no owner involvement.
     function test_sweep_lifts_allowance_to_chain_minimum_without_owner_action() public {
-        tm.setMinFee(200);
+        tm.setMinFee(2_000);
         address fwd = _deployFunded(5, AMOUNT);
         vm.prank(NON_OP);
         DepositForwarder(fwd).requestSweep();
@@ -74,7 +74,7 @@ contract CctpMinFeeTest is Base {
 
     /// Owner rate above the on-chain minimum: the owner's (larger) allowance wins.
     function test_owner_rate_above_minimum_wins() public {
-        tm.setMinFee(200);
+        tm.setMinFee(2_000); // 0.02%
         config.setCctpStandardMaxFeePpm(900);
         address fwd = _deployFunded(6, AMOUNT);
         DepositForwarder(fwd).flush();
@@ -85,7 +85,7 @@ contract CctpMinFeeTest is Base {
     /// Owner rate below the on-chain minimum: the minimum wins — the owner cannot starve settlement by
     /// setting too small a rate.
     function test_owner_rate_below_minimum_is_lifted() public {
-        tm.setMinFee(900);
+        tm.setMinFee(9_000); // 0.09%
         config.setCctpStandardMaxFeePpm(200);
         address fwd = _deployFunded(7, AMOUNT);
         DepositForwarder(fwd).flush();
@@ -95,7 +95,7 @@ contract CctpMinFeeTest is Base {
 
     /// The minimum applies to fast burns too (the messenger checks it regardless of finality).
     function test_fast_burn_also_lifted_to_minimum() public {
-        tm.setMinFee(200);
+        tm.setMinFee(2_000);
         config.setFastEnabled(true);
         address fwd = factory.deploy(_r(), 8, true);
         usdc.mint(fwd, AMOUNT);
@@ -108,7 +108,7 @@ contract CctpMinFeeTest is Base {
     /// A Circle minimum ABOVE the immutable cap is NOT paid: the allowance stops at the cap and the burn
     /// reverts at the messenger — a deliberate halt (documented), never a silent over-cap deduction.
     function test_minimum_above_cap_is_capped_and_halts() public {
-        tm.setMinFee(20_000); // 2% > the 1% cap
+        tm.setMinFee(200_000); // 2% > the 1% cap
         address fwd = _deployFunded(9, AMOUNT);
         (bool ok, bytes memory ret) = fwd.call(abi.encodeWithSignature("flush()"));
         require(!ok, "above-cap minimum must halt");
@@ -116,7 +116,7 @@ contract CctpMinFeeTest is Base {
         require(keccak256(ret) == keccak256(expected), "halts at the messenger's minimum check, at the cap");
         require(usdc.balanceOf(fwd) == AMOUNT, "nothing moved");
         // Exactly AT the cap it still settles, at the cap.
-        tm.setMinFee(10_000);
+        tm.setMinFee(100_000); // exactly 1%
         DepositForwarder(fwd).flush();
         uint256 settled = AMOUNT - SETUP - BASE - _pct(AMOUNT);
         require(tm.lastMaxFee() == (settled * 10_000 + 1e6 - 1) / 1e6, "at-cap minimum paid at the cap");
@@ -124,10 +124,10 @@ contract CctpMinFeeTest is Base {
 
     /// The cap is applied ROUNDED UP to a whole subunit, so on tiny burns it is coarser than the rate: an
     /// above-cap minimum (1.5%) still settles small amounts — until the rounded cap can no longer reach the
-    /// floored minimum. A 1-subunit burn is unburnable under any minimum: the floored minimum is 1, the
-    /// forwarder clamps `maxFee` below the amount (to 0), and the messenger's own check rejects it.
+    /// floored minimum. A 1-subunit burn is unburnable under any minimum: Circle's getter refuses it, the
+    /// probe yields 0, and the messenger's own check rejects `maxFee 0` against its floored minimum of 1.
     function test_rounded_cap_boundary_table() public {
-        tm.setMinFee(15_000); // 1.5% > the 1% cap
+        tm.setMinFee(150_000); // 1.5% > the 1% cap
         config.setSetupFee(0);
         config.setBaseFee(0);
         config.setFeePpm(0);
@@ -177,7 +177,7 @@ contract CctpMinFeeTest is Base {
 
     /// Small burns: a non-zero rate floors the minimum to 1 subunit, and the forwarder's allowance follows.
     function test_small_burn_minimum_floors_to_one() public {
-        tm.setMinFee(1); // 0.0001%: floors to 1 on anything below 1e6 subunits
+        tm.setMinFee(1); // 1e-7: floors to 1 on anything below 1e7 subunits
         address fwd = _deployFunded(10, 50);
         vm.prank(NON_OP);
         DepositForwarder(fwd).requestSweep();
@@ -201,5 +201,11 @@ contract CctpMinFeeTest is Base {
         require(tm.lastMaxFee() == 1, "maxFee 1 < amount 2, >= floored minimum 1");
         require(usdc.balanceOf(fwd) == 0, "swept");
         require(DepositForwarder(fwd).sweepableAt() == 0, "window closed");
+        // Circle's getter refuses amount <= 1 under a minimum; the forwarder's tolerant probe treats that
+        // revert as 0, and the messenger's own burn check then rejects the 1-subunit burn.
+        require(
+            _reverts(address(tm), abi.encodeWithSignature("getMinFeeAmount(uint256)", uint256(1))),
+            "getter reverts at amount 1 under a minimum"
+        );
     }
 }
