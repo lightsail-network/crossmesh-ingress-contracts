@@ -345,16 +345,22 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   (DoS.7.R.1).
 - **DoS.4.R.1** — Fast is only ever _requested_ for _flush ∧ address-committed-fast ∧
   `fastEnabled`_; `sweep` always requests standard finality. Fast-fee configuration cannot strand
-  USDC in a deposit address because the reviewed burn implementations do not check the fast fee
-  on-chain at all (only `maxFee < amount` and, where present, the finality-independent minimum
-  fee): the burn succeeds, and Circle documents that an under-funded fast transfer _may_ be
-  degraded to standard — a possible outcome, not a delivery guarantee. Once burned, completion
-  rests on Circle's attestation and destination execution (TB5); `sweep` cannot recover a burned
-  amount. `fastEnabled` therefore stops settlements from requesting (and reporting) a mode Circle
-  would not honor; it governs future burns only and is not a guard against a revert. Note: Circle's
-  fee page also says the burn "will revert on the source blockchain" when the fee exceeds `maxFee`;
-  the deployed code (Ethereum, Base, Arc, verified) has no such check — the code governs here.
-  The standard path needs no owner-set allowance either (DoS.1.R.1).
+  USDC in a deposit address: the reviewed burn implementations — TokenMessengerV2 on Ethereum/Base
+  (`0x555E272506c06E7E559D57418563742afE363EC8`) and Arc
+  (`0x1CcaFdffBC1b7B5C499c97322F961B7d929a41b4`) — check only `maxFee < amount` and, where present,
+  the finality-independent minimum fee, never the fast fee (Circle's fee page says a burn whose
+  fee exceeds `maxFee` "will revert on the source blockchain"; the code governs here). Circle
+  documents that an
+  under-funded fast transfer _may_ be degraded to standard — a possible outcome, not a delivery
+  guarantee: once burned, completion rests on Circle's attestation and destination execution
+  (TB5), and `sweep` cannot recover a burned amount. `fastEnabled` therefore stops settlements
+  from requesting (and reporting) a mode Circle would not honor; it governs future burns only and
+  is not a guard against a revert. The standard path needs no owner-set allowance either
+  (DoS.1.R.1). _Risk accepted:_ `setFastEnabled` and `setCctpFastMaxFeePpm` are deliberately not
+  cross-checked: a non-zero allowance would not prove it covers Circle's current fast fee, so
+  requiring `> 0` would reject only the exactly-zero configuration without establishing
+  sufficiency. `Settled.fast` records the _requested_ mode and off-chain consumers must not read
+  it as the delivered finality. The reference backend does not request fast at all today.
 - **DoS.5.R.1** — `_burnLimit` probes `burnLimitsPerMessage` and reverts early
   (`burn unsupported`) instead of burning into a dead bridge.
 - **DoS.5.R.2** — _Risk accepted (deliberate trade-off):_ if Circle permanently retired the
