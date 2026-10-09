@@ -230,11 +230,19 @@ contract DepositForwarder {
     /// @notice Recover stray native coin to the owner-set rescue sink. Operator only.
     /// @dev Native coin can land here via pre-deployment sends or selfdestruct/SENDALL — neither of which
     ///      code can block — so the remedy is to sweep it out, not to "reject" it. The sink is fixed in
-    ///      Config, so a compromised operator key cannot redirect it. Never touches USDC.
+    ///      Config, so a compromised operator key cannot redirect it. Must not move USDC: on a chain where
+    ///      the native coin and ERC-20 USDC share one ledger (e.g. Arc, where `address(this).balance` IS the
+    ///      deposit's principal at 18 decimals), draining the native balance would hand the principal to the
+    ///      sink. So the USDC balance is snapshotted before the transfer and required not to have dropped after it —
+    ///      on such a chain only sub-USDC-subunit dust (invisible to `balanceOf`) is ever rescuable, and on
+    ///      every other chain the check is a no-op. No per-chain flag: the invariant holds by construction.
     function rescueNative() external {
         require(config.isOperator(msg.sender), "not operator");
         address sink = config.rescueSink();
         require(sink != address(0), "sink unset");
+        IERC20 usdc = IERC20(config.usdc());
+        require(address(usdc) != address(0), "not initialized");
+        uint256 usdcBefore = usdc.balanceOf(address(this));
         uint256 amount = address(this).balance;
         emit RescuedNative(sink, amount);
         // Slither arbitrary-send-eth/low-level-calls: `sink` is the governance-set rescue sink (checked
@@ -243,6 +251,14 @@ contract DepositForwarder {
         // slither-disable-next-line arbitrary-send-eth,low-level-calls
         (bool ok,) = sink.call{value: amount}("");
         require(ok, "rescue failed");
+        // Principal guard: a native rescue may never DECREASE the USDC balance (see @dev) — a native transfer
+        // can only ever lower a shared-ledger balance, so "not lower" is exactly the property that protects
+        // the principal. Passing means whatever the sink took it (or a re-entrant call) put back, i.e. net
+        // principal extraction <= 0. Slither reentrancy-balance: `usdcBefore` is a deliberate pre-call
+        // snapshot — comparing the balance ACROSS the external call is the whole point of the check, and
+        // no state is written after it.
+        // slither-disable-next-line reentrancy-balance
+        require(usdc.balanceOf(address(this)) >= usdcBefore, "native is USDC");
     }
 
     /// @notice Recover a mis-sent non-USDC token to the rescue sink. Operator only.

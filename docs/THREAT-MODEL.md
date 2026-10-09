@@ -138,7 +138,8 @@ Numbered flows (threats in §2 reference these):
    non-custodial invocation (`mint_and_forward`), mints and forwards USDC to the committed
    recipient.
 8. Side flow: stray native coin / non-USDC tokens are rescued, operator-gated, to the
-   governance-set `rescueSink` (USDC is explicitly excluded from rescue).
+   governance-set `rescueSink` (USDC is explicitly excluded from rescue — including on chains
+   where the native coin _is_ USDC, see Elevation.5).
 
 ### Data entities
 
@@ -148,7 +149,7 @@ Numbered flows (threats in §2 reference these):
 | Recipient strkey + fast flag | CWIA immutable args; echoed in `hookData` (flows 1, 5) | Committed in the CREATE2 address; validated off-chain before issuance; verifiable via `recipient()` before funding |
 | Service fees | `flush` → `feeCollector` (flow 4) | Each component clamped by an immutable cap; `total < settled` enforced; full split published in `Settled` |
 | Config parameters | `Config` storage (flow 4) | USDC path is one-time `init`; tunables clamped by immutable caps; every change emits an event |
-| Stray native coin / non-USDC tokens | Deposit address → `rescueSink` (flow 8) | Operator-gated; destination governance-set and non-zero; USDC excluded from rescue |
+| Stray native coin / non-USDC tokens | Deposit address → `rescueSink` (flow 8) | Operator-gated; destination governance-set and non-zero; USDC excluded from rescue (`rescueERC20` by address, `rescueNative` by a USDC-balance-not-decreased post-condition) |
 
 ### Trust boundaries
 
@@ -219,6 +220,7 @@ STRIDE applied per flow. IDs below are referenced by the remediations in §3.
 | Elevation.2 | The owner points `config.factory` at a hostile contract, which then holds flush rights (flow 3)                     |
 | Elevation.3 | A compromised owner key abuses the `Config` setters (flow 4)                                                        |
 | Elevation.4 | Fee evasion: pre-arm a sweep window with dust, then route real deposits through the fee-free `sweep` path (flow 3′) |
+| Elevation.5 | On a chain where the native coin _is_ USDC (Arc), an operator uses `rescueNative` to move a deposit's principal to the rescue sink (flow 8) |
 
 ---
 
@@ -332,7 +334,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 ### Elevation of privilege
 
 - **Elevation.1.R.1** — Operator worst case is _bounded, not prevented_: trigger settlements at
-  capped fees and choose their timing. No amount, destination, or principal access. Keys are
+  capped fees and choose their timing. No amount, destination, or principal access — the rescue
+  paths exclude USDC on every chain, including native-USDC chains (Elevation.5). Keys are
   revocable per-address via `setOperator`.
 - **Elevation.2.R.1** — The factory pointer only gates `flush`, so a hostile value is exactly
   operator-tier (Elevation.1). `setFactory(0)` is the revoke/kill switch; a wrong value degrades
@@ -345,6 +348,15 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 - **Elevation.4.R.1** — `requestSweep` snapshots `sweepCap = balance` at arm time: the fee-free
   window only ever covers funds present _when armed_; deposits arriving later need a fresh
   request (a fresh delay), and `flush` draws the armed budget down as it settles.
+- **Elevation.5.R.1** — On Arc the native balance and the ERC-20 USDC balance are two views of
+  one ledger (`address(this).balance` is the principal at 18 decimals), so an unconditional native
+  sweep would be a principal-theft path at operator tier. `rescueNative` therefore snapshots
+  `usdc.balanceOf(this)` before the native transfer and requires it not to have decreased after: on a
+  one-ledger chain only sub-subunit dust (invisible to `balanceOf`) is rescuable and any net
+  whole-subunit principal decrease reverts; on every other chain the post-condition is a no-op.
+  Assuming `Config.init` pins the correct USDC token, the guard is structural: it has no owner-set
+  per-chain bypass and no later `Config` change can disable it. Covered by `test/Rescue.t.sol`
+  (`RescueNativeLedgerTest`, over a one-ledger USDC mock).
 
 ---
 
@@ -359,9 +371,12 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   destination, never revocable trust), checks-effects-interactions event ordering in
   `rescueNative`, and the explicit documentation of the address-distribution boundary (Spoof.1)
   as the system's one residual principal risk — with integrator cross-verification prescribed as
-  its mitigation.
+  its mitigation. The audit then surfaced a chain-assumption gap the model had not asked about:
+  "native coin ≠ USDC" was implicit, and false on Arc (Elevation.5). The fix is the
+  USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
+  onboarding note (Appendix A).
 - **Are the treatments adequate?** Every implemented mitigation is exercised by the test suite:
-  60 unit tests across the Deploy / Flush / Sweep / Rescue / Config / PublicFlush suites,
+  64 unit tests across the Deploy / Flush / Sweep / Rescue / Config / PublicFlush suites,
   including a dedicated **wire-contract suite** (`test/CctpArgs.t.sol`) that byte-locks the
   hookData layout and every burn-call argument handed to Circle, an event-contract test locking
   every `Settled` field on both settlement paths, and **fuzzed property tests**
@@ -392,3 +407,9 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 - **Determinism:** `solc 0.8.35`, `evm_version = shanghai`, optimizer 200 runs, metadata hash
   stripped (`bytecode_hash = "none"`, `cbor_metadata = false`) so addresses depend only on actual
   code; the same stack deploys to identical addresses on every target chain.
+- **Chain onboarding:** before enabling a chain, determine whether its native coin and ERC-20
+  USDC share one ledger (Arc: USDC at `0x3600…0000` is the native coin's 6-decimal view). On such
+  a chain `rescueNative` is expected to revert for any deposit address holding principal
+  (Elevation.5); that is the guard working, not a fault to work around. The guard anchors on
+  `config.usdc()` being that shared-ledger view, so `init` must point at it (an unrelated token
+  address would silence the guard).
