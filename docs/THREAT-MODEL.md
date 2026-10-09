@@ -272,17 +272,36 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   clones have no setters, no initializer, and no upgrade path. Changing the recipient means a
   _different address_.
 - **Tamper.2.R.1** — The USDC path is a one-time `init` latch (owner-only, zero-checked,
-  `initialized` flag); immutable thereafter. `init` also applies partial sanity checks — both
-  addresses must have code, the messenger must be CCTP V2 (`messageBodyVersion() == 1`; V1 has a
-  minter and a limit too, but no hooked burn), its `localMinter()` must report a non-zero burn
-  limit for the token, and it must have a remote TokenMessenger registered for Stellar — so the
-  honest mistakes that could never settle cannot be latched permanently. They do not authenticate
-  the pair as Circle's canonical one, nor judge a hostile owner's inputs (Elevation.3.R.1).
-  Governing rule documented in `Config`: only values that provably cannot redirect USDC may be
-  mutable.
+  `initialized` flag); immutable thereafter. `init` sanity-checks the pair — both addresses have
+  code, the messenger is CCTP V2 (`messageBodyVersion() == 1`; V1 has a minter and a limit too,
+  but no hooked burn), its `localMinter()` reports a non-zero burn limit for the token, and a
+  remote TokenMessenger is registered for Stellar — so those mis-wirings cannot be latched
+  permanently. The checks neither authenticate the pair as Circle's canonical one nor establish
+  full settlement readiness (`stellarForwarder_` is only checked non-zero); a hostile owner is the
+  Elevation.3.R.1 case. Governing rule documented in `Config`: only values that provably cannot
+  redirect USDC may be mutable.
 - **Tamper.3.R.1** — Immutable caps clamp every tunable: `maxSetupFee`/`maxBaseFee` 100 USDC,
   `maxFeePpm` 1%, `minSweepDelay` 1 hour / `maxSweepDelay` 7 days, `maxCctpFeePpm` 1%. A depositor
-  can verify the worst case on-chain before funding.
+  can verify the worst case on-chain before funding. Per deposit, the service-fee bound is
+  `setupFee (once per address per chain, ≤ 100 USDC) + N × baseFee (≤ 100 USDC each) + 1% of the
+  settled amount`, where N is the number of fee-charging settlements: one for a deposit that
+  arrives in one batch and fits under Circle's per-message burn limit (10M USDC on Ethereum and
+  Arc today; Circle can change it), more when the balance exceeds the limit or when separately
+  arriving deposits are flushed separately instead of accumulating — `flush` has no caller-chosen
+  amount, so one balance cannot be split, but the operator does choose settlement timing. Circle's
+  own CCTP fee, if any, is separate (DoS.4.R.1). So a deposit of a few hundred USDC could, at the
+  caps, be consumed almost entirely by fees, while a 10,000 USDC deposit settled in one batch
+  loses at most ≈ 300 USDC. _Risk accepted:_ the caps are absolute, not proportional, and fee
+  changes apply immediately rather than after a delay — deliberately. The flat fees cover L1 gas,
+  which can change quickly: a proportional ceiling would force settling small deposits at a loss,
+  and a change delay longer than `maxSweepDelay` would leave the operator settling at a loss or
+  halting for a week during a gas spike. Accepted consequences: an immediate fee increase can
+  consume almost all of an already-funded small deposit, and a fee-charging flush can land before
+  a pending or mature sweep. Depositor protections: the caps are on-chain and immutable; the live
+  schedule is published through the API before an address is funded; deposits that cannot cover
+  the fees are not settled (`fee exceeds settled` reverts, and the backend parks them below its
+  minimum) and stay self-rescuable; `sweep` is fee-free after `sweepDelay`; and fees reach only
+  the governance-set `feeCollector` — principal never moves anywhere but the committed recipient.
 - **Tamper.4.R.1** — `hookData` is built on-chain (`_hookData`) from the committed immutable args
   with a fixed 32-byte frame matching Circle's published hookData layout byte-for-byte; no
   external input reaches it.

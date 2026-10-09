@@ -205,7 +205,8 @@ contract DepositForwarder {
     ///         the operator/factory — or by ANYONE while `config.publicFlush()` is on. The configured fees
     ///         are collected either way (zero them for a fee-free public wind-down).
     /// @dev No caller-chosen amount — each call settles `min(balance, burnLimit)`, so the flat base fee
-    ///      cannot be multiplied by splitting one balance into many small settlements. A balance above the
+    ///      cannot be multiplied by splitting one balance; settlement timing can still make successive
+    ///      deposits incur separate base fees. A balance above the
     ///      cap drains over successive flushes. A pending {sweep} has its armed budget (`sweepCap`) drawn
     ///      down by what flush settles; the countdown clears once the remaining budget drops below
     ///      `MIN_SWEEP_AMOUNT` or the balance is fully drained, but a partial flush that leaves both keeps
@@ -416,8 +417,11 @@ contract DepositForwarder {
 
     /// @dev Compute and transfer the fees for settling `settled`: a one-time `setupFee` plus the
     ///      per-settlement fee (`baseFee + settled × feePpm / 1e6`), each clamped to its cap, sent in one
-    ///      transfer to the fee collector. `baseFee` is a flat per-settlement charge; it cannot be multiplied
-    ///      by splitting because {flush} has no caller-chosen amount (it settles the whole balance).
+    ///      transfer to the fee collector. `baseFee` is charged per {flush}, which settles `min(balance,
+    ///      burnLimit)` with no caller-chosen amount, so one balance cannot be split; settlement timing can
+    ///      still make successive deposits incur separate base fees. The only
+    ///      bound on the total is `total < settled`: the caps are absolute, so at the caps a small deposit can
+    ///      be consumed almost entirely by fees — the documented, verifiable worst case (Tamper.3.R.1).
     /// @param usdc The USDC token (passed in to avoid a re-read).
     /// @param settled Amount being settled.
     /// @return setupFee One-time setup fee charged here (0 if already paid).
