@@ -188,15 +188,18 @@ contract CctpMinFeeTest is Base {
         require(usdc.balanceOf(fwd) == 0, "swept");
     }
 
-    /// A 1-subunit burn under a non-zero minimum stays impossible (minFee >= 1 vs maxFee < 1): the clamp
-    /// below the amount keeps the forwarder's maxFee valid and the messenger refuses the burn.
-    function test_one_subunit_under_minimum_still_reverts() public {
+    /// The smallest armable balance (MIN_SWEEP_AMOUNT = 2) is sweepable under a non-zero minimum: the floored
+    /// minimum of 1 fits below the amount. (A 1-subunit balance cannot arm at all — see Sweep.t.sol.)
+    function test_minimum_armable_balance_sweeps_under_minimum() public {
         tm.setMinFee(1);
-        address fwd = _deployFunded(11, 1);
+        address fwd = _deployFunded(11, 2);
         vm.prank(NON_OP);
         DepositForwarder(fwd).requestSweep();
         vm.warp(block.timestamp + DELAY);
         vm.prank(NON_OP);
-        require(_reverts(fwd, abi.encodeWithSignature("sweep()")), "1 subunit cannot satisfy a minimum");
+        DepositForwarder(fwd).sweep();
+        require(tm.lastMaxFee() == 1, "maxFee 1 < amount 2, >= floored minimum 1");
+        require(usdc.balanceOf(fwd) == 0, "swept");
+        require(DepositForwarder(fwd).sweepableAt() == 0, "window closed");
     }
 }

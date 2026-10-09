@@ -50,10 +50,16 @@ contract SweepTest is Base {
     }
 
     /// requestSweep cannot pre-arm an empty address (would otherwise let someone bypass the window for a
-    /// future deposit).
-    function test_request_sweep_requires_balance() public {
+    /// future deposit), nor a 1-subunit one: under a Circle minimum fee a 1-subunit burn can never satisfy
+    /// `maxFee >= 1` and `maxFee < amount` at once, so such a window could never be swept nor closed.
+    function test_request_sweep_requires_minimum_balance() public {
         address fwd = factory.deploy(_r(), 1, false); // no balance
         require(_reverts(fwd, abi.encodeWithSignature("requestSweep()")), "requestSweep on empty must revert");
+        usdc.mint(fwd, 1);
+        require(_reverts(fwd, abi.encodeWithSignature("requestSweep()")), "1 subunit cannot arm a window");
+        usdc.mint(fwd, 1);
+        DepositForwarder(fwd).requestSweep(); // 2 subunits: the smallest burnable amount
+        require(DepositForwarder(fwd).sweepCap() == 2, "armed at the minimum");
     }
 
     /// requestSweep is idempotent while armed — re-calling does not move the window.
@@ -123,12 +129,57 @@ contract SweepTest is Base {
         require(usdc.balanceOf(fwd) == 0 && DepositForwarder(fwd).sweepableAt() == 0, "full drain clears it");
     }
 
+    /// A burn-limit-capped sweep that leaves a remainder CCTP could never burn (1 subunit) must CLOSE the
+    /// window instead of keeping it armed — otherwise `requestSweep` stays a no-op for a later deposit and
+    /// every sweep retries the unburnable subunit, stranding the later deposit's self-rescue.
+    function test_sub_minimum_remainder_after_capped_sweep_closes_window() public {
+        minter.setBurnLimit(address(usdc), 50e6);
+        tm.setMinFee(1); // a non-zero Circle minimum makes a 1-subunit burn impossible
+        address fwd = factory.deploy(_r(), 90, false);
+        usdc.mint(fwd, 50e6 + 1); // armed balance ≡ 1 (mod burn limit)
+        DepositForwarder(fwd).requestSweep();
+        vm.warp(DepositForwarder(fwd).sweepableAt());
+
+        DepositForwarder(fwd).sweep(); // settles the 50 cap; 1 subunit remains
+        require(usdc.balanceOf(fwd) == 1, "1 subunit remains");
+        require(DepositForwarder(fwd).sweepableAt() == 0 && DepositForwarder(fwd).sweepCap() == 0, "window closed");
+
+        usdc.mint(fwd, 30e6); // a real deposit (under the cap) lands later and gets its own window
+        DepositForwarder(fwd).requestSweep();
+        require(DepositForwarder(fwd).sweepCap() == 30e6 + 1, "fresh window covers deposit + stray subunit");
+        vm.warp(DepositForwarder(fwd).sweepableAt());
+        DepositForwarder(fwd).sweep();
+        require(usdc.balanceOf(fwd) == 0, "later deposit self-rescued, stray subunit rode along");
+    }
+
+    /// Same for a capped FLUSH drawing an armed budget down to 1 subunit: the window closes rather than
+    /// pinning the address.
+    function test_sub_minimum_remainder_after_capped_flush_closes_window() public {
+        minter.setBurnLimit(address(usdc), 50e6);
+        tm.setMinFee(1);
+        config.setSetupFee(0);
+        config.setBaseFee(0);
+        config.setFeePpm(0);
+        address fwd = factory.deploy(_r(), 91, false);
+        usdc.mint(fwd, 50e6 + 1);
+        DepositForwarder(fwd).requestSweep();
+
+        DepositForwarder(fwd).flush(); // operator settles the 50 cap; armed budget would be 1
+        require(DepositForwarder(fwd).sweepableAt() == 0 && DepositForwarder(fwd).sweepCap() == 0, "window closed");
+
+        usdc.mint(fwd, 30e6); // under the cap
+        DepositForwarder(fwd).requestSweep();
+        vm.warp(block.timestamp + DELAY);
+        DepositForwarder(fwd).sweep();
+        require(usdc.balanceOf(fwd) == 0, "later deposit self-rescued");
+    }
+
     /// A dust pre-arm cannot drain a LATER deposit — `requestSweep` snapshots the balance, so an old
     /// window only ever sweeps what was present when it was armed.
     function test_dust_prearm_cannot_sweep_future_deposit() public {
         address fwd = factory.deploy(_r(), 21, false);
-        usdc.mint(fwd, 1); // 1 unit of dust
-        DepositForwarder(fwd).requestSweep(); // armed with sweepCap = 1
+        usdc.mint(fwd, 2); // dust: the smallest armable balance
+        DepositForwarder(fwd).requestSweep(); // armed with sweepCap = 2
         vm.warp(block.timestamp + DELAY + 1);
 
         usdc.mint(fwd, 100e6); // a real deposit lands AFTER arming

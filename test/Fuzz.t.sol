@@ -60,7 +60,7 @@ contract FuzzTest is Base {
     /// ∀ armed balance and later deposits: sweep never settles beyond the snapshot taken at arm time —
     /// deposits landing after `requestSweep` stay untouched until their own request + delay.
     function testFuzz_sweep_bounded_by_armed_snapshot(uint256 armAmount, uint256 laterAmount) public {
-        armAmount = armAmount % 1_000e6 + 1;
+        armAmount = armAmount % 1_000e6 + 2; // >= MIN_SWEEP_AMOUNT, the smallest armable balance
         laterAmount %= 1_000e6;
 
         address fwd = factory.deploy(_r(), 79, false);

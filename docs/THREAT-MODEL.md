@@ -38,7 +38,7 @@ caller-chosen amount or destination**:
 
 - `flush()` — operator/factory only; settles `min(balance, cctpBurnLimit)`; charges the service
   fees (one-time `setupFee` + `baseFee` + `settled × feePpm / 1e6`, each clamped by an immutable cap).
-- `sweep()` — the permissionless escape hatch: anyone may `requestSweep()` (balance > 0), and
+- `sweep()` — the permissionless escape hatch: anyone may `requestSweep()` (balance ≥ `MIN_SWEEP_AMOUNT`), and
   after `sweepDelay` (≤ immutable `maxSweepDelay` = 7 days) anyone may `sweep()` **fee-free**,
   settling `min(balance, sweepCap, cctpBurnLimit)` to the same committed recipient. Sweeps always
   use CCTP _standard_ finality, so no fast-mode configuration can strand self-rescue.
@@ -291,18 +291,21 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 - **DoS.1.R.1** — Permissionless, fee-free escape hatch: `requestSweep()` + `sweep()`, with the
   delay capped by the immutable `maxSweepDelay = 7 days`. Operator absence delays funds, never
   strands them. The hatch is owner-independent on the CCTP side too: the burn's `maxFee` is
-  lifted to the messenger's own on-chain minimum fee (`_cctpMinFee`, a tolerant probe that is a
-  no-op where the messenger predates minimum fees), so a Circle minimum-fee change cannot halt
-  `sweep` or standard `flush` pending an owner rate update — only a minimum above the immutable
-  1% cap halts settlement (DoS.5.R.4).
+  lifted to the messenger's own on-chain minimum fee (`_cctpMinFee`, a tolerant probe that reads 0
+  where the messenger predates minimum fees), so a Circle minimum-fee change cannot halt `sweep`
+  or standard `flush` pending an owner rate update; the burn fails only when Circle's required
+  minimum exceeds the rounded, amount-clamped allowance under the immutable 1% cap (DoS.5.R.4).
+  The hatch arms only over `MIN_SWEEP_AMOUNT` (2 subunits) and closes over less; the accepted
+  residuals — a dust pre-arm costing a later depositor at most one extra `sweepDelay`, and a lone
+  subunit that waits for the next deposit — are recorded in DoS.7.R.1 and Elevation.4.R.1.
 - **DoS.1.R.2** — For a _deliberate_ wind-down, governance flips `Config.publicFlush` (opening
   `flush` and the factory's one-tx `deployAndFlush` to everyone) and zeroes the fee schedule —
   each knob single-purpose — so anyone settles any address in a single tx with no `requestSweep`
   wait. The switch cannot redirect USDC in either state — settlement always pays the committed
   recipient — and the sweep path (R.1) remains available regardless.
 - **DoS.2.R.1** — A partial `flush` cannot reset an armed window; the window closes only when the
-  armed `sweepCap` budget is spent or the balance is drained — and both outcomes deliver funds to
-  the committed recipient.
+  remaining armed `sweepCap` budget drops below `MIN_SWEEP_AMOUNT` or the balance is drained — and
+  both outcomes deliver the armed funds to the committed recipient.
 - **DoS.3.R.1** — `flush` reverts when fees would consume the settlement (`fee exceeds settled`),
   but `sweep` is fee-free and clamps CCTP `maxFee < toBurn`, so self-rescue works down to
   1 subunit.
@@ -328,12 +331,25 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   the minimum comes back under the cap. Paying an uncapped minimum instead would let a Circle-side
   change (or a permissionless `sweep` caller) impose an unbounded fee on depositors; halting is
   the safer failure. Operational mitigation is monitoring Circle's fee announcements per chain.
-- **DoS.6.R.1** — Settlement takes `min(balance, burnLimit)` per call and drains an above-cap
-  balance over successive calls; the sweep window stays open across partial settlements with no
-  fresh cooldown.
-- **DoS.7.R.1** — `requestSweep` requires `balance > 0` (no pre-arming empty addresses) and is
-  idempotent while armed (cannot extend an existing window); arming never blocks `flush` — after
-  the delay, settlement is a fair race that either way pays the committed recipient.
+- **DoS.6.R.1** — Settlement takes `min(balance, burnLimit)` per call (`sweep` also bounded by the
+  armed `sweepCap`) and drains an above-cap balance over successive calls; the sweep window stays
+  open across partial settlements with no fresh cooldown while the remaining armed budget is
+  ≥ `MIN_SWEEP_AMOUNT`. A smaller remainder (an armed balance ≡ 1 mod `burnLimit`) closes the
+  window instead of staying armed: it could never be burned under a Circle minimum fee and would
+  otherwise pin the address against later deposits' own windows. The lone subunit cannot arm a
+  sweep; it rides along with the next deposit's settlement, or with a zero-service-fee `flush`
+  while Circle's minimum fee is zero (DoS.7.R.1).
+- **DoS.7.R.1** — `requestSweep` requires `balance >= MIN_SWEEP_AMOUNT` (2 subunits: no pre-arming
+  empty addresses, and no window over a balance CCTP could never burn — under a Circle minimum fee
+  a 1-subunit burn cannot satisfy `maxFee >= 1` and `maxFee < amount` at once, so such a window
+  would never sweep nor close), `flush` and `sweep` close a window whose remaining budget falls
+  below that bound (DoS.6.R.1), and `requestSweep` is idempotent while armed (cannot extend an
+  existing window). Arming never blocks `flush`: after the delay both paths are callable, and
+  whichever executes first decides whether service fees are charged; the recipient is the same
+  either way. _Residual, accepted:_ a third party can still pre-arm an address with a dust deposit
+  (≥ 2 subunits), which delays a later depositor's _own_ window by at most one extra `sweepDelay`
+  (≤ 7 days) and one transaction, and gives a fee-charging `flush` that much more opportunity to
+  execute first; the committed recipient is unchanged.
 - **DoS.8.R.1** — `deploy` commits the strkey bytes as-is by design (documented on `deploy`);
   the backend's full strkey validation (base32 + checksum) is the prescribed gate before any address
   is handed out, so a malformed recipient never reaches a depositor through the reference flow.
@@ -373,7 +389,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   `acceptOwnership`) prevents accidental loss; `transferOwnership(0)` cancels a pending transfer.
 - **Elevation.4.R.1** — `requestSweep` snapshots `sweepCap = balance` at arm time: the fee-free
   window only ever covers funds present _when armed_; deposits arriving later need a fresh
-  request (a fresh delay), and `flush` draws the armed budget down as it settles.
+  request (a fresh delay — the one-extra-delay residual of DoS.7.R.1), and `flush` draws the armed
+  budget down as it settles.
 - **Elevation.5.R.1** — On Arc the native balance and the ERC-20 USDC balance are two views of
   one ledger (`address(this).balance` is the principal at 18 decimals), so an unconditional native
   sweep would be a principal-theft path at operator tier. `rescueNative` therefore snapshots
@@ -408,7 +425,7 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
   onboarding note (Appendix A).
 - **Are the treatments adequate?** Every implemented mitigation is exercised by the test suite:
-  81 unit tests across the Foundry suites in `test/`,
+  83 unit tests across the Foundry suites in `test/`,
   including a dedicated **wire-contract suite** (`test/CctpArgs.t.sol`) that byte-locks the
   hookData layout and every burn-call argument handed to Circle, an event-contract test locking
   every `Settled` field on both settlement paths, and **fuzzed property tests**
