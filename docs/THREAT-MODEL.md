@@ -160,7 +160,7 @@ Numbered flows (threats in §2 reference these):
 
 | #   | Boundary                                           | Trust stance                                                                                                                                        |
 | --- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| TB1 | Depositor ↔ integrator ↔ Cross Mesh (flow 1)  | **Untrusted.** A lying address distributor is the one path to principal loss (Spoof.1)                                                              |
+| TB1 | Depositor ↔ integrator ↔ Cross Mesh (flow 1)  | **Untrusted.** A lying address distributor is a residual path to principal loss (Spoof.1), beside an invalid recipient (DoS.8), an unverified `init` (Elevation.3) and the accepted CCTP dependencies (DoS.5) |
 | TB2 | Anyone ↔ deposit address (flows 2, 3′)             | Permissionless by design; safe because no caller input chooses amount or destination                                                                |
 | TB3 | Operator/factory ↔ `flush` (flow 3)                | Semi-trusted: may _time_ settlements and charge _capped_ fees; cannot redirect                                                                      |
 | TB4 | Owner ↔ `Config` setters                           | Semi-trusted: bounded by immutable caps; cannot touch the USDC path after `init`. The path itself is the owner's choice at `init` (sanity-checked, not authenticated), so addresses are issued for a chain only once it is initialized AND the wiring is verified against Circle's published addresses (Elevation.3.R.1) |
@@ -379,8 +379,20 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   (≤ 7 days) and one transaction, and gives a fee-charging `flush` that much more opportunity to
   execute first; the committed recipient is unchanged.
 - **DoS.8.R.1** — `deploy` commits the strkey bytes as-is by design (documented on `deploy`);
-  the backend's full strkey validation (base32 + checksum) is the prescribed gate before any address
-  is handed out, so a malformed recipient never reaches a depositor through the reference flow.
+  full strkey validation in the address producers — Cross Mesh's backend and the open-source SDK
+  integrators re-derive with — is the prescribed gate before any address is handed out, an
+  operational dependency outside this repository. The rules both must enforce, mirroring the
+  Stellar `CctpForwarder`: length 56 (`G`/`C`) or 69 (`M`), the RFC 4648 base32 alphabet with zero
+  padding bits, a matching version byte, a valid CRC16-XMODEM checksum, and for a `C` key rejection
+  of the `CctpForwarder` and USDC contract IDs themselves. _Risk accepted:_ on-chain validation in
+  `DepositFactory._args` was considered and rejected. It would reject a malformed recipient in
+  both `computeAddress` and `deploy`, so it would catch an off-chain validation bug during the
+  reference flow's on-chain cross-check (flow 1), before issuance — though not for an address
+  derived and funded entirely offline, which would then also be undeployable. It was not adopted
+  because the acceptance rules belong to the Stellar forwarder and may evolve, which an immutable
+  factory cannot follow (it would refuse valid keys, or admit new invalid ones, permanently), and
+  because it would move every deposit address. The residual irreversible-burn risk of relying on
+  off-chain validation is accepted.
 - **DoS.8.R.2** — The commitment is verifiable _before funding_: recompute the address off-chain
   or read `recipient()` on the deployed clone — a validation failure is catchable while zero
   USDC has moved.
@@ -479,8 +491,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   hardening produced concrete changes: a zero-address guard on `setRescueSink` (a sink is a
   destination, never revocable trust), checks-effects-interactions event ordering in
   `rescueNative`, and the explicit documentation of the address-distribution boundary (Spoof.1)
-  as the system's one residual principal risk — with integrator cross-verification prescribed as
-  its mitigation. The audit then surfaced a chain-assumption gap the model had not asked about:
+  as a residual principal risk (beside DoS.8, Elevation.3 and DoS.5) — with integrator
+  cross-verification prescribed as its mitigation. The audit then surfaced a chain-assumption gap the model had not asked about:
   "native coin ≠ USDC" was implicit, and false on Arc (Elevation.5). The fix is the
   USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
   onboarding note (Appendix A).
