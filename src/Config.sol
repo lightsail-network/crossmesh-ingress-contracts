@@ -218,7 +218,9 @@ contract Config is IDepositConfig {
     }
 
     /// @notice Set the destination for collected fees.
-    /// @param value New fee collector (must be non-zero, else fee settlements would revert or burn the fee).
+    /// @param value New fee collector (must be non-zero, else fee settlements would revert or burn the fee). A
+    ///        deposit address itself is refused at settlement time (`fee collector is this clone`), since a
+    ///        self-paid fee would let a flush close the depositor's sweep window without delivering.
     function setFeeCollector(address value) external onlyOwner {
         require(value != address(0), "zero fee collector");
         feeCollector = value;

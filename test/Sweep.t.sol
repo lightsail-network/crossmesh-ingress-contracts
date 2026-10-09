@@ -110,6 +110,41 @@ contract SweepTest is Base {
         require(DepositForwarder(fwd).sweepableAt() == 0, "full drain clears the window");
     }
 
+    /// The fee collector may not be the settling clone: a self-paid fee would leave the balance in place while
+    /// the nominal drawdown closed the depositor's window. The flush must revert and leave the window intact;
+    /// a zero-fee flush (nothing to collect) is unaffected; the sweep then proceeds on the original schedule.
+    function test_self_collector_cannot_reset_window() public {
+        address fwd = factory.deploy(_r(), 23, false);
+        usdc.mint(fwd, 100e6);
+        DepositForwarder(fwd).requestSweep();
+        uint256 armed = DepositForwarder(fwd).sweepableAt();
+        config.setFeeCollector(fwd); // owner points the collector at this very clone
+        config.setBaseFee(100e6 - 2); // and prices the fee just under the balance (setup fee already at 10)
+        config.setSetupFee(0);
+        config.setFeePpm(0);
+
+        (bool ok, bytes memory ret) = fwd.call(abi.encodeWithSignature("flush()"));
+        require(!ok, "self-collector flush must revert");
+        require(
+            keccak256(ret) == keccak256(abi.encodeWithSignature("Error(string)", "fee collector is this clone")),
+            "exact reason"
+        );
+        require(usdc.balanceOf(fwd) == 100e6, "balance untouched");
+        require(DepositForwarder(fwd).sweepableAt() == armed, "window not reset");
+        require(DepositForwarder(fwd).sweepCap() == 100e6, "budget untouched");
+        require(!DepositForwarder(fwd).setupFeePaid(), "setup flag untouched");
+
+        config.setBaseFee(0); // nothing to collect: the collector is not consulted
+        address other = factory.deploy(_r2(), 24, false);
+        usdc.mint(other, 5e6);
+        DepositForwarder(other).flush();
+        require(usdc.balanceOf(other) == 0, "zero-fee flush unaffected by the collector setting");
+
+        vm.warp(armed);
+        DepositForwarder(fwd).sweep(); // the depositor's schedule holds
+        require(usdc.balanceOf(fwd) == 0 && DepositForwarder(fwd).sweepableAt() == 0, "swept on the original schedule");
+    }
+
     /// A PARTIAL flush (balance above the CCTP cap) must NOT reset a pending self-rescue window; only a full
     /// drain clears it.
     function test_partial_flush_keeps_escape_window() public {

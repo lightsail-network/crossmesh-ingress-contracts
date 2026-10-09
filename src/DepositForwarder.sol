@@ -421,7 +421,10 @@ contract DepositForwarder {
     ///      burnLimit)` with no caller-chosen amount, so one balance cannot be split; settlement timing can
     ///      still make successive deposits incur separate base fees. The only
     ///      bound on the total is `total < settled`: the caps are absolute, so at the caps a small deposit can
-    ///      be consumed almost entirely by fees — the documented, verifiable worst case (Tamper.3.R.1).
+    ///      be consumed almost entirely by fees — the documented, verifiable worst case (Tamper.3.R.1). The
+    ///      collector may not be THIS clone: a self-transfer would leave the "collected" fee in place while
+    ///      {flush} drew the armed sweep budget down by the nominal amount — closing a depositor's window
+    ///      without delivering the funds (DoS.2.R.2).
     /// @param usdc The USDC token (passed in to avoid a re-read).
     /// @param settled Amount being settled.
     /// @return setupFee One-time setup fee charged here (0 if already paid).
@@ -436,6 +439,7 @@ contract DepositForwarder {
         if (total > 0) {
             address collector = config.feeCollector();
             require(collector != address(0), "zero fee collector");
+            require(collector != address(this), "fee collector is this clone");
             usdc.safeTransfer(collector, total);
         }
     }
