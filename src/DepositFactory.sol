@@ -19,7 +19,8 @@ contract DepositFactory {
     /// @param forwarder The deployed clone address.
     /// @param recipient The committed Stellar recipient (strkey UTF-8 bytes).
     /// @param index The per-recipient index.
-    /// @param fast Whether this address settles via a CCTP fast transfer (committed in the clone's args).
+    /// @param fast Whether this address is committed to REQUEST CCTP fast transfers (in the clone's args); the
+    ///        request is made only on a fee-charging flush while `fastEnabled` (see `DepositForwarder.fast`).
     event Deployed(address indexed forwarder, bytes recipient, uint256 index, bool fast);
 
     /// @notice Emitted by {deployAndFlush}, naming the account that initiated the relayed settlement. The
@@ -72,9 +73,9 @@ contract DepositFactory {
 
     /// @notice Deploy the forwarder clone for `(recipient, index, fast)` if not already deployed. Permissionless.
     /// @dev The recipient is committed AS-IS — no on-chain validation. Cross Mesh's backend and the
-    ///      integrators' SDK validate the full Stellar strkey (base32 + checksum) before an address is handed
-    ///      out; `computeAddress` and `deploy` accept identical bytes, so any address that can be computed
-    ///      can also be deployed.
+    ///      integrators' SDK enforce the full strkey rules (THREAT-MODEL DoS.8.R.1) before an address is handed
+    ///      out; `computeAddress` and `deploy` accept identical bytes, so any address that can be computed can
+    ///      also be deployed.
     /// @param recipient The Stellar recipient (strkey UTF-8 bytes), baked in as the clone's immutable arg.
     /// @param index The per-recipient index.
     /// @param fast True for a CCTP fast-transfer address, false for standard.

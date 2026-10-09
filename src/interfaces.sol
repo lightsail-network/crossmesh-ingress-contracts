@@ -16,21 +16,18 @@ interface ITokenMessengerV2 {
     /// @param mintRecipient Destination mint recipient as bytes32 (the Stellar forwarder).
     /// @param burnToken Token to burn on this chain (USDC).
     /// @param destinationCaller Address allowed to receive on the destination (the Stellar forwarder).
-    /// @param maxFee Max CCTP fee the caller accepts (deducted from `amount`). The burn checks it ON-CHAIN
-    ///        only as `maxFee < amount` and — on implementations with a non-zero `minFee` —
-    ///        `maxFee >= getMinFeeAmount(amount)` ({ITokenMessengerV2MinFee}); both apply to every finality.
-    ///        A shortfall against Circle's quoted FAST fee does not by itself revert the burn: whether the
-    ///        allowance buys fast delivery is decided OFF-CHAIN by Circle's attestation, which documents
-    ///        that such a transfer MAY be degraded to standard — fast delivery is not guaranteed. Standard
-    ///        transfers are free today; fast fees can change — see
+    /// @param maxFee Max CCTP fee the caller accepts (deducted from `amount`). Checked ON-CHAIN only as
+    ///        `maxFee < amount` and — on implementations with a non-zero `minFee` —
+    ///        `maxFee >= getMinFeeAmount(amount)` ({ITokenMessengerV2MinFee}), at every finality. A shortfall
+    ///        against Circle's quoted FAST fee does not revert the burn: Circle's attestation decides OFF-CHAIN
+    ///        whether the allowance buys fast delivery and documents that such a transfer MAY be degraded to
+    ///        standard. Standard transfers are free today; fast fees can change — see
     ///        https://developers.circle.com/cctp/concepts/fees
     /// @param minFinalityThreshold The REQUESTED minimum finality: 1000 makes the message eligible for fast
-    ///        attestation (charges a fee), 2000 requests finalized attestation (free). It is not the
-    ///        delivered finality (see `maxFee`). This forwarder
-    ///        passes 1000 only when ALL of: the clone committed to fast, the settlement is a fee-charging
-    ///        {DepositForwarder.flush} (never {sweep}), and `IDepositConfig.fastEnabled()` is on; otherwise
-    ///        2000. The committed flag alone does not decide the mode — governance can downgrade every fast
-    ///        address to standard at any time.
+    ///        attestation (charges a fee), 2000 requests finalized attestation (free). It is not the delivered
+    ///        finality (see `maxFee`). This forwarder passes 1000 only when ALL of: the clone committed to fast,
+    ///        the settlement is a fee-charging {DepositForwarder.flush} (never {sweep}), and
+    ///        `IDepositConfig.fastEnabled()` is on; otherwise 2000.
     ///        See https://developers.circle.com/cctp/concepts/finality-and-block-confirmations
     /// @param hookData Post-mint hook payload (here: the committed Stellar recipient).
     function depositForBurnWithHook(
@@ -108,9 +105,8 @@ interface IDepositConfig {
     ///         — the worst case a depositor must check before funding (see the threat model, Tamper.3.R.1).
     function maxSetupFee() external view returns (uint256);
     /// @notice Upper bound on the per-settlement base fee; charged once per {DepositForwarder.flush}, which
-    ///         settles the whole balance present (up to Circle's per-message burn limit — a balance above it,
-    ///         or deposits arriving in batches, mean several settlements and several base fees). Same sizing
-    ///         rationale as `maxSetupFee`.
+    ///         settles `min(balance, burnLimit)` — a balance above the limit, or deposits flushed separately,
+    ///         mean several base fees. Same sizing rationale as `maxSetupFee`.
     function maxBaseFee() external view returns (uint256);
     /// @notice Upper bound on the per-settlement proportional fee, in millionths (1e6 = 100%).
     function maxFeePpm() external view returns (uint256);

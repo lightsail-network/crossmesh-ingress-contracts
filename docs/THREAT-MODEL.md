@@ -164,7 +164,7 @@ Numbered flows (threats in §2 reference these):
 
 | #   | Boundary                                           | Trust stance                                                                                                                                        |
 | --- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| TB1 | Depositor ↔ integrator ↔ Cross Mesh (flow 1)  | **Untrusted.** A lying address distributor is the one path to principal loss (Spoof.1)                                                              |
+| TB1 | Depositor ↔ integrator ↔ Cross Mesh (flow 1)  | **Untrusted.** A lying address distributor is a residual path to principal loss (Spoof.1), beside an invalid recipient (DoS.8), an unverified `init` (Elevation.3) and the accepted CCTP dependencies (DoS.5) |
 | TB2 | Anyone ↔ deposit address (flows 2, 3′)             | Permissionless by design; safe because no caller input chooses amount or destination                                                                |
 | TB3 | Operator/factory ↔ `flush` (flow 3)                | Semi-trusted: may _time_ settlements and charge _capped_ fees; cannot redirect                                                                      |
 | TB4 | Owner ↔ `Config` setters                           | Semi-trusted: bounded by immutable caps; cannot touch the USDC path after `init`. The path itself is the owner's choice at `init` (sanity-checked, not authenticated), so addresses are issued for a chain only once it is initialized AND the wiring is verified against Circle's published addresses (Elevation.3.R.1) |
@@ -272,37 +272,36 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   clones have no setters, no initializer, and no upgrade path. Changing the recipient means a
   _different address_.
 - **Tamper.2.R.1** — The USDC path is a one-time `init` latch (owner-only, zero-checked,
-  `initialized` flag); immutable thereafter. `init` also applies partial sanity checks — both
-  addresses must have code, the messenger must be CCTP V2 (`messageBodyVersion() == 1`; V1 has a
-  minter and a limit too, but no hooked burn), its `localMinter()` must report a non-zero burn
-  limit for the token, and it must have a remote TokenMessenger registered for Stellar — so the
-  honest mistakes that could never settle cannot be latched permanently. They do not authenticate
-  the pair as Circle's canonical one, nor judge a hostile owner's inputs (Elevation.3.R.1).
-  Governing rule documented in `Config`: only values that provably cannot redirect USDC may be
-  mutable.
+  `initialized` flag); immutable thereafter. `init` sanity-checks the pair — both addresses have
+  code, the messenger is CCTP V2 (`messageBodyVersion() == 1`; V1 has a minter and a limit too,
+  but no hooked burn), its `localMinter()` reports a non-zero burn limit for the token, and a
+  remote TokenMessenger is registered for Stellar — so those mis-wirings cannot be latched
+  permanently. The checks neither authenticate the pair as Circle's canonical one nor establish
+  full settlement readiness (`stellarForwarder_` is only checked non-zero); a hostile owner is the
+  Elevation.3.R.1 case. Governing rule documented in `Config`: only values that provably cannot
+  redirect USDC may be mutable.
 - **Tamper.3.R.1** — Immutable caps clamp every tunable: `maxSetupFee`/`maxBaseFee` 100 USDC,
   `maxFeePpm` 1%, `minSweepDelay` 1 hour / `maxSweepDelay` 7 days, `maxCctpFeePpm` 1%. A depositor
-  can verify the worst case on-chain before funding. Stated per deposit, the service-fee bound
-  is `setupFee (once per address per chain, ≤ 100 USDC) + N × baseFee (≤ 100 USDC each) +
-  1% of the settled amount`, where N is the number of settlements the deposit needs: 1 when it
-  arrives in one batch and fits under Circle's per-message burn limit, more when deposits arrive
-  in batches or the balance exceeds the limit (10M USDC on Ethereum and Arc today; Circle can
-  change it, and a lower limit raises N for large deposits). Circle's own CCTP fee, if any, is
-  separate (DoS.4.R.1). So a deposit of a few hundred USDC could, at the caps, be consumed
-  almost entirely by fees, while a 10,000 USDC deposit settled in one batch loses at most
-  ≈ 300 USDC. Each `flush` settles the whole balance present (no caller-chosen amount), so the
-  operator cannot split one balance to multiply the base fee — N follows the arrival pattern
-  and the burn limit, not the operator's choice. _Risk accepted:_ the caps are absolute, not proportional, and
-  fee changes apply immediately rather than after a delay — deliberately. The flat fees exist
-  to cover L1 gas, which moves fast in a bull market: a proportional ceiling would force
-  settling small deposits at a loss, and a change delay longer than `maxSweepDelay` would leave
-  the operator settling at a loss or halting for a week during a gas spike (while depositors
-  can self-rescue for free anyway). Depositor protections are: the caps are on-chain and
-  immutable; the live schedule is published through the API before an address is funded;
-  deposits that cannot cover the fees are not settled (`fee exceeds settled` reverts, and the
-  backend parks them below its minimum) and stay self-rescuable; `sweep` is fee-free after
-  `sweepDelay`; and fees reach only the governance-set `feeCollector` — principal never
-  moves anywhere but the committed recipient.
+  can verify the worst case on-chain before funding. Per deposit, the service-fee bound is
+  `setupFee (once per address per chain, ≤ 100 USDC) + N × baseFee (≤ 100 USDC each) + 1% of the
+  settled amount`, where N is the number of fee-charging settlements: one for a deposit that
+  arrives in one batch and fits under Circle's per-message burn limit (10M USDC on Ethereum and
+  Arc today; Circle can change it), more when the balance exceeds the limit or when separately
+  arriving deposits are flushed separately instead of accumulating — `flush` has no caller-chosen
+  amount, so one balance cannot be split, but the operator does choose settlement timing. Circle's
+  own CCTP fee, if any, is separate (DoS.4.R.1). So a deposit of a few hundred USDC could, at the
+  caps, be consumed almost entirely by fees, while a 10,000 USDC deposit settled in one batch
+  loses at most ≈ 300 USDC. _Risk accepted:_ the caps are absolute, not proportional, and fee
+  changes apply immediately rather than after a delay — deliberately. The flat fees cover L1 gas,
+  which can change quickly: a proportional ceiling would force settling small deposits at a loss,
+  and a change delay longer than `maxSweepDelay` would leave the operator settling at a loss or
+  halting for a week during a gas spike. Accepted consequences: an immediate fee increase can
+  consume almost all of an already-funded small deposit, and a fee-charging flush can land before
+  a pending or mature sweep. Depositor protections: the caps are on-chain and immutable; the live
+  schedule is published through the API before an address is funded; deposits that cannot cover
+  the fees are not settled (`fee exceeds settled` reverts, and the backend parks them below its
+  minimum) and stay self-rescuable; `sweep` is fee-free after `sweepDelay`; and fees reach only
+  the governance-set `feeCollector` — principal never moves anywhere but the committed recipient.
 - **Tamper.4.R.1** — `hookData` is built on-chain (`_hookData`) from the committed immutable args
   with a fixed 32-byte frame matching Circle's published hookData layout byte-for-byte; no
   external input reaches it.
@@ -310,9 +309,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 ### Repudiation
 
 - **Repudiate.1.R.1** — `Settled` publishes the full split — `settled`, `setupFee`,
-  `perSettleFee`, `burned`, `viaSweep`, and the fast mode _requested_ from Circle (the delivered
-  finality and the executed CCTP fee are not recorded by this source-chain event; the attested
-  message carries both) — for off-chain
+  `perSettleFee`, `burned`, `viaSweep`, and the fast mode _requested_ from Circle (delivered
+  finality and the executed CCTP fee appear only in the attested message) — for off-chain
   reconciliation; every `Config` setter emits an event. On the relayed path
   (`deployAndFlush`) `Settled.caller` is the factory, the clone's `msg.sender`; the factory's
   `FlushRelayed(caller, forwarder)` names the initiating account, paired with `Settled` by
@@ -332,13 +330,13 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 - **DoS.1.R.1** — Permissionless, fee-free escape hatch: `requestSweep()` + `sweep()`, with the
   delay capped by the immutable `maxSweepDelay = 7 days`. Operator absence delays funds, never
   strands them. The hatch is owner-independent on the CCTP side too: the burn's `maxFee` is
-  lifted to the messenger's own on-chain minimum fee (`_cctpMinFee`, a tolerant probe that is a
-  no-op where the messenger predates minimum fees), so a Circle minimum-fee change cannot halt
-  `sweep` or standard `flush` pending an owner rate update — only a minimum above the immutable
-  1% cap halts settlement (DoS.5.R.4). The hatch arms only over `MIN_SWEEP_AMOUNT` (2 subunits)
-  and closes over less; the accepted residuals — a third-party dust pre-arm costing a later
-  depositor at most one extra `sweepDelay`, and a lone subunit that waits for the next deposit —
-  are recorded in DoS.7.R.1 and Elevation.4.R.1.
+  lifted to the messenger's own on-chain minimum fee (`_cctpMinFee`, a tolerant probe that reads 0
+  where the messenger predates minimum fees), so a Circle minimum-fee change cannot halt `sweep`
+  or standard `flush` pending an owner rate update; the burn fails only when Circle's required
+  minimum exceeds the rounded, amount-clamped allowance under the immutable 1% cap (DoS.5.R.4).
+  The hatch arms only over `MIN_SWEEP_AMOUNT` (2 subunits) and closes over less; the accepted
+  residuals — a dust pre-arm costing a later depositor at most one extra `sweepDelay`, and a lone
+  subunit that waits for the next deposit — are recorded in DoS.7.R.1 and Elevation.4.R.1.
 - **DoS.1.R.2** — For a _deliberate_ wind-down, governance flips `Config.publicFlush` (opening
   `flush` and the factory's one-tx `deployAndFlush` to everyone) and zeroes the fee schedule —
   each knob single-purpose — so anyone settles any address in a single tx with no `requestSweep`
@@ -346,52 +344,48 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   recipient — and the sweep path (R.1) remains available regardless.
 - **DoS.1.R.3** — Stellar-side delivery does not depend on the operator either. The burn is
   final on the EVM side; what remains is to fetch Circle's attestation and submit
-  `mint_and_forward(message, attestation)` to Circle's `CctpForwarder`. Cross Mesh — the service
-  that runs the operator key and issues addresses to integrators — runs a Stellar relayer
-  that submits this for every settlement it flushes (best effort, no fixed SLA). A depositor's
-  self-rescue `sweep` is detected by the same service and today completed manually on the
-  Stellar side (automated relay of external sweeps is a backlog item), but it never has to wait
-  for that: the call carries no authorization and the recipient is read from the message, so
-  anyone — the depositor included — can submit it from any Stellar account holding XLM for the
-  fee; the message and attestation are public. The remaining dependencies are Circle's: the
-  attestation service and the forwarder not being paused by Circle (TB5). Circle's Forwarding
-  Service does not serve Stellar, so the zero `hookData` magic (Circle's prescribed value)
-  forgoes nothing.
+  `mint_and_forward(message, attestation)` to Circle's `CctpForwarder`. Cross Mesh's Stellar
+  relayer does this for every settlement it flushes (best effort, no fixed SLA); a self-rescue
+  `sweep` is completed manually today (automated relay of external sweeps is a backlog item).
+  Nothing waits on that: the call carries no authorization and reads the recipient from the
+  message, so anyone — the depositor included — can submit it from any Stellar account holding
+  XLM for the fee; message and attestation are public. The remaining dependencies are Circle's:
+  the attestation service and the forwarder not being paused (TB5). Circle's Forwarding Service
+  does not serve Stellar, so the zero `hookData` magic (Circle's prescribed value) forgoes nothing.
 - **DoS.2.R.1** — A partial `flush` cannot reset an armed window; the window closes only when the
-  remaining armed `sweepCap` budget drops below `MIN_SWEEP_AMOUNT` or the balance is drained — and
-  both outcomes deliver the armed funds to the committed recipient.
+  remaining armed `sweepCap` budget drops below `MIN_SWEEP_AMOUNT` or the balance is drained — both
+  outcomes follow a settlement to the committed recipient.
 - **DoS.2.R.2** — The drawdown is by the nominal settled amount, so it relies on the fee actually
   leaving the clone. `_collectFees` therefore refuses a `feeCollector` equal to the settling clone
   (`fee collector is this clone`): otherwise an owner could point the collector at a deposit
   address, set the flat fee just under its balance, and have each flush "collect" the fee to the
   clone itself while burning a few subunits — closing the armed window and keeping up to
-  `setupFee + baseFee + 1%` in place every cycle, with the depositor re-arming forever. (Found in
-  internal review after the assessment; it needed only the owner key, which can also grant itself
-  flush rights.) A collector that is another clone or the implementation is a real transfer and
-  stays allowed. Covered by `test/Sweep.t.sol` (`test_self_collector_cannot_reset_window`).
+  `setupFee + baseFee + 1%` in place every cycle, with the depositor re-arming forever (found in
+  internal review after the assessment; it needs only the owner key, which can grant itself flush
+  rights). A collector that is another clone or the implementation is a real transfer and stays
+  allowed. Covered by `test/Sweep.t.sol` (`test_self_collector_cannot_reset_window`).
 - **DoS.3.R.1** — `flush` reverts when fees would consume the settlement (`fee exceeds settled`),
   but `sweep` is fee-free and clamps CCTP `maxFee < toBurn`, so self-rescue works down to
   `MIN_SWEEP_AMOUNT` (2 subunits) — the smallest burn Circle accepts once a minimum fee is set
   (DoS.7.R.1).
 - **DoS.4.R.1** — Fast is only ever _requested_ for _flush ∧ address-committed-fast ∧
   `fastEnabled`_; `sweep` always requests standard finality. Fast-fee configuration cannot strand
-  USDC in a deposit address because the reviewed burn implementations do not check the fast fee
-  on-chain at all (only `maxFee < amount` and, where present, the finality-independent minimum
-  fee): the burn succeeds, and Circle documents that an under-funded fast transfer _may_ be
-  degraded to standard — a possible outcome, not a delivery guarantee. Once burned, completion
-  rests on Circle's attestation and destination execution (TB5); `sweep` cannot recover a burned
-  amount. `fastEnabled` therefore stops settlements from requesting (and reporting) a mode Circle
-  would not honor; it governs future burns only and is not a guard against a revert. Note: Circle's
-  fee page also says the burn "will revert on the source blockchain" when the fee exceeds `maxFee`;
-  the deployed code (Ethereum, Base, Arc, verified) has no such check — the code governs here.
-  The standard path needs no owner-set allowance either (DoS.1.R.1). _Risk accepted:_
-  `setFastEnabled` and `setCctpFastMaxFeePpm` are deliberately not cross-checked. A non-zero
-  allowance would not prove it covers Circle's current fast fee, so requiring `> 0` would guard
-  only the exactly-zero configuration, which is no worse than any other under-funded one. The
-  burn succeeds either way; completion then depends on Circle's attestation and destination
-  execution (TB5), and Circle documents that an under-funded fast request may be degraded to
-  standard. `Settled.fast` records the _requested_ mode and off-chain consumers must not read it
-  as the delivered finality. The reference backend does not request fast at all today.
+  USDC in a deposit address: the reviewed burn implementations — TokenMessengerV2 on Ethereum/Base
+  (`0x555E272506c06E7E559D57418563742afE363EC8`) and Arc
+  (`0x1CcaFdffBC1b7B5C499c97322F961B7d929a41b4`) — check only `maxFee < amount` and, where present,
+  the finality-independent minimum fee, never the fast fee (Circle's fee page says a burn whose
+  fee exceeds `maxFee` "will revert on the source blockchain"; the code governs here). Circle
+  documents that an
+  under-funded fast transfer _may_ be degraded to standard — a possible outcome, not a delivery
+  guarantee: once burned, completion rests on Circle's attestation and destination execution
+  (TB5), and `sweep` cannot recover a burned amount. `fastEnabled` therefore stops settlements
+  from requesting (and reporting) a mode Circle would not honor; it governs future burns only and
+  is not a guard against a revert. The standard path needs no owner-set allowance either
+  (DoS.1.R.1). _Risk accepted:_ `setFastEnabled` and `setCctpFastMaxFeePpm` are deliberately not
+  cross-checked: a non-zero allowance would not prove it covers Circle's current fast fee, so
+  requiring `> 0` would reject only the exactly-zero configuration without establishing
+  sufficiency. `Settled.fast` records the _requested_ mode and off-chain consumers must not read
+  it as the delivered finality. The reference backend does not request fast at all today.
 - **DoS.5.R.1** — `_burnLimit` probes `burnLimitsPerMessage` and reverts early
   (`burn unsupported`) instead of burning into a dead bridge. _Risk accepted (chain-independent
   addresses):_ because a deposit address is the same on every EVM chain (Appendix A), it can
@@ -405,7 +399,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   (Appendix A, "Issuing addresses per chain").
 - **DoS.5.R.2** — _Risk accepted (deliberate trade-off):_ if Circle permanently retired the
   pinned `TokenMessengerV2`, `flush` and `sweep` would both revert and USDC would sit in deposit
-  addresses. The _absence_ of any admin USDC-recovery path is what makes the design rug-proof;
+  addresses. The _absence_ of any admin USDC-recovery path is what keeps principal out of every
+  key's reach after a verified `init`;
   operational mitigation is monitoring Circle deprecation notices per chain.
 - **DoS.5.R.3** — _Risk accepted (same trade-off):_ `TokenMessengerV2` enforces a caller
   denylist, and every settlement calls it with the deposit address as `msg.sender`. If Circle
@@ -421,38 +416,40 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   uncapped minimum instead would let a Circle-side
   change (or a permissionless `sweep` caller) impose an unbounded fee on depositors; halting is
   the safer failure. Operational mitigation is monitoring Circle's fee announcements per chain.
-- **DoS.6.R.1** — Settlement takes `min(balance, burnLimit)` per call and drains an above-cap
-  balance over successive calls; the sweep window stays open across partial settlements with no
-  fresh cooldown while the remaining armed budget is ≥ `MIN_SWEEP_AMOUNT`. A smaller remainder
-  (an armed balance ≡ 1 mod `burnLimit`) closes the window instead of staying armed — it could never
-  be burned under a Circle minimum fee and would otherwise pin the address against later deposits'
-  own windows; it cannot be settled on its own and waits to ride along with the next deposit's
-  settlement (DoS.7.R.1).
+- **DoS.6.R.1** — Settlement takes `min(balance, burnLimit)` per call (`sweep` also bounded by the
+  armed `sweepCap`) and drains an above-cap balance over successive calls; the sweep window stays
+  open across partial settlements with no fresh cooldown while the remaining armed budget is
+  ≥ `MIN_SWEEP_AMOUNT`. A smaller remainder (an armed balance ≡ 1 mod `burnLimit`) closes the
+  window instead of staying armed: it could never be burned under a Circle minimum fee and would
+  otherwise pin the address against later deposits' own windows. The lone subunit cannot arm a
+  sweep; it rides along with the next deposit's settlement, or with a zero-service-fee `flush`
+  while Circle's minimum fee is zero (DoS.7.R.1).
 - **DoS.7.R.1** — `requestSweep` requires `balance >= MIN_SWEEP_AMOUNT` (2 subunits: no pre-arming
-  empty addresses, and no arming a window over a balance CCTP could never burn — under a Circle
-  minimum fee a 1-subunit burn cannot satisfy `maxFee >= 1` and `maxFee < amount` at once, so such
-  a window would never sweep nor close), `flush` and `sweep` close a window whose remaining budget
-  falls below that bound (DoS.6.R.1), and `requestSweep` is idempotent while armed (cannot extend
-  an existing window); arming never blocks `flush` — after the delay, settlement is a fair race that either way
-  pays the committed recipient. _Residual, accepted:_ a third party can still pre-arm an address
-  with a dust deposit (≥ 2 subunits), which delays a later depositor's _own_ window by at most one
-  extra `sweepDelay` (≤ 7 days) and one transaction; the armed sweep pays the committed recipient,
-  `flush` is unaffected, and no value is at risk.
+  empty addresses, and no window over a balance CCTP could never burn — under a Circle minimum fee
+  a 1-subunit burn cannot satisfy `maxFee >= 1` and `maxFee < amount` at once, so such a window
+  would never sweep nor close), `flush` and `sweep` close a window whose remaining budget falls
+  below that bound (DoS.6.R.1), and `requestSweep` is idempotent while armed (cannot extend an
+  existing window). Arming never blocks `flush`: after the delay both paths are callable, and
+  whichever executes first decides whether service fees are charged; the recipient is the same
+  either way. _Residual, accepted:_ a third party can still pre-arm an address with a dust deposit
+  (≥ 2 subunits), which delays a later depositor's _own_ window by at most one extra `sweepDelay`
+  (≤ 7 days) and one transaction, and gives a fee-charging `flush` that much more opportunity to
+  execute first; the committed recipient is unchanged.
 - **DoS.8.R.1** — `deploy` commits the strkey bytes as-is by design (documented on `deploy`);
-  full strkey validation in the address producers — Cross Mesh's backend, which derives and
-  issues addresses to integrators over its API, and the open-source SDK with which integrators
-  re-derive them offline — is the prescribed gate before any address is handed out, so
-  a malformed recipient never reaches a depositor through the reference flow. The rules
-  those producers must enforce, mirroring the Stellar `CctpForwarder`: length 56 (`G`/`C`) or 69
-  (`M`), the RFC 4648 base32 alphabet with zero padding bits, a matching version byte, a valid
-  CRC16-XMODEM checksum, and for a `C` key rejection of the `CctpForwarder` and USDC contract IDs
-  themselves. _Risk accepted:_ on-chain validation in `DepositFactory._args` was considered and
-  rejected. A reverting `deploy` would leave USDC already sent to that address stuck at an
-  address that can never receive code (no clone, so no `rescueERC20` either) — it changes the
-  failure mode, not the loss; the acceptance rules belong to the Stellar forwarder and may
-  evolve, which an immutable factory cannot follow (it would then refuse valid keys, or admit
-  new invalid ones, permanently); it would move every deposit address; and it costs ≈30k gas per
-  `deploy` (≈90k today) even table-driven.
+  full strkey validation in the address producers — Cross Mesh's backend and the open-source SDK
+  integrators re-derive with — is the prescribed gate before any address is handed out, an
+  operational dependency outside this repository. The rules both must enforce, mirroring the
+  Stellar `CctpForwarder`: length 56 (`G`/`C`) or 69 (`M`), the RFC 4648 base32 alphabet with zero
+  padding bits, a matching version byte, a valid CRC16-XMODEM checksum, and for a `C` key rejection
+  of the `CctpForwarder` and USDC contract IDs themselves. _Risk accepted:_ on-chain validation in
+  `DepositFactory._args` was considered and rejected. It would reject a malformed recipient in
+  both `computeAddress` and `deploy`, so it would catch an off-chain validation bug during the
+  reference flow's on-chain cross-check (flow 1), before issuance — though not for an address
+  derived and funded entirely offline, which would then also be undeployable. It was not adopted
+  because the acceptance rules belong to the Stellar forwarder and may evolve, which an immutable
+  factory cannot follow (it would refuse valid keys, or admit new invalid ones, permanently), and
+  because it would move every deposit address. The residual irreversible-burn risk of relying on
+  off-chain validation is accepted.
 - **DoS.8.R.2** — The commitment is verifiable _before funding_: recompute the address off-chain
   or read `recipient()` on the deployed clone — a validation failure is catchable while zero
   USDC has moved.
@@ -480,19 +477,18 @@ fast)` produce the identical address and behavior; there is no initializer, so n
 ### Elevation of privilege
 
 - **Elevation.1.R.1** — Operator worst case is _bounded, not prevented_: trigger settlements at
-  capped fees and choose their timing. No amount, destination, or principal access — the rescue
-  paths exclude USDC on every clone and every chain, including native-USDC chains (Elevation.5);
-  the sole USDC an operator can move is a mis-send sitting on the implementation itself, which
-  holds no principal (DoS.10.R.2). Keys are revocable per-address via `setOperator`.
+  capped fees and choose their timing. No amount, destination, or principal access: the rescue
+  paths exclude USDC on every clone and every chain, native-USDC chains included (Elevation.5);
+  the only USDC an operator can move sits on the implementation — a mis-send or collected fees,
+  never principal (DoS.10.R.2). Keys are revocable per-address via `setOperator`.
 - **Elevation.2.R.1** — The factory pointer only gates `flush`, so a hostile value is exactly
-  operator-tier (Elevation.1). A non-zero value must be a contract that reports
-  `implementation().config() == this Config`, so the right cannot be handed to a mistyped or
-  unrelated address by mistake; the check does not authenticate the code — a contract that lies
-  about its wiring passes, with exactly the operator-tier right above (it may time settlements,
-  including ahead of a fee-free sweep, and trigger fee collection to `feeCollector`; it cannot
-  redirect USDC). A wrong value costs the legitimate operator only its one-tx relay (two-tx
-  operation instead). `setFactory(0)` revokes the factory-specific right only — an address that
-  is also an operator, or anyone while `publicFlush` is on, keeps flushing.
+  operator-tier (Elevation.1): it may time settlements, including ahead of a fee-free sweep, and
+  trigger fee collection to `feeCollector`; it cannot redirect USDC. A non-zero value must be a
+  contract reporting `implementation().config() == this Config`, so the right cannot go to a
+  mistyped or unrelated address by mistake; the check does not authenticate the code — a contract
+  that lies about its wiring passes, with that operator-tier right only. A wrong value costs the
+  legitimate operator only its one-tx relay. `setFactory(0)` revokes the factory-specific right
+  only — an address that is also an operator, or anyone while `publicFlush` is on, keeps flushing.
 - **Elevation.3.R.1** — Owner worst case is bounded by the immutable caps: fees at their caps,
   delay at 7 days, swapped fee/rescue destinations, fast disabled, flush opened to everyone
   (`publicFlush` — settlement access only, DoS.9). The owner **cannot** redirect principal (USDC path immutable,
@@ -501,19 +497,20 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   of the owner rates (DoS.1.R.1). Two-step ownership transfer (`transferOwnership` +
   `acceptOwnership`) prevents accidental loss; `transferOwnership(0)` cancels a pending transfer.
   _Scope of the bound — accepted residual:_ it applies on a chain from a _verified_ `init`
-  onward — `init` only sanity-checks its inputs, so a hostile pair latched at `init` stays hostile
-  for every later deposit too; what makes post-`init` deposits safe is the verification of the
-  latched values against Circle's published addresses before any address is issued. Deposit
-  addresses are computable on every chain before Config is initialized there, and USDC that
-  reaches one before a verified `init` has its exit decided by the owner's `init` values: a decoy
-  `usdc` would let `rescueERC20` move the real token, a hostile `tokenMessenger` would receive
-  every settlement's burn approval. No immutable cap covers that window (a compiled per-chain allow-list
-  would, at the cost of moving every address whenever a chain is added — rejected). Mitigation is
-  operational: an address is issued for a chain only after `Config.initialized()` is true there and
-  `usdc`/`tokenMessenger`/`stellarForwarder` match Circle's published addresses (Appendix A), and
-  `init` refuses the mis-wirings that could never settle (Tamper.2.R.1). Covered by `test/Config.t.sol`
-  (`test_init_rejects_miswired_path`). Note that on a chain not yet initialized the `init` right
-  belongs to the ORIGINAL `owner_` baked into the init code, not to a rotated owner (Appendix A).
+  onward. `init` only sanity-checks its inputs, so a hostile pair latched at `init` stays hostile
+  for every later deposit; what makes post-`init` deposits safe is checking the latched values
+  against Circle's published addresses before any address is issued. Deposit addresses are
+  computable on every chain before Config is initialized there, and USDC that reaches one before a
+  verified `init` has its exit decided by the owner's `init` values: a decoy `usdc` would let
+  `rescueERC20` move the real token, a hostile `tokenMessenger` would receive every settlement's
+  burn approval. No immutable cap covers that window (a compiled per-chain allow-list would, at
+  the cost of moving every address whenever a chain is added — rejected). Mitigation is
+  operational: an address is issued for a chain only after `Config.initialized()` is true there
+  and `usdc`/`tokenMessenger`/`stellarForwarder` match Circle's published addresses (Appendix A);
+  `init` rejects the listed mis-wirings (Tamper.2.R.1), covered by `test/Config.t.sol`
+  (`test_init_rejects_miswired_path`). A fresh Config on a new chain starts with the ORIGINAL
+  `owner_` baked into the init code, unaffected by rotations elsewhere; on an already-deployed
+  instance a local ownership transfer before `init` changes who can initialize it (Appendix A).
 - **Elevation.4.R.1** — `requestSweep` snapshots `sweepCap = balance` at arm time: the fee-free
   window only ever covers funds present _when armed_; deposits arriving later need a fresh
   request (a fresh delay — the one-extra-delay residual of DoS.7.R.1), and `flush` draws the armed
@@ -551,8 +548,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   hardening produced concrete changes: a zero-address guard on `setRescueSink` (a sink is a
   destination, never revocable trust), checks-effects-interactions event ordering in
   `rescueNative`, and the explicit documentation of the address-distribution boundary (Spoof.1)
-  as the system's one residual principal risk — with integrator cross-verification prescribed as
-  its mitigation. The audit then surfaced a chain-assumption gap the model had not asked about:
+  as a residual principal risk (beside DoS.8, Elevation.3 and DoS.5) — with integrator
+  cross-verification prescribed as its mitigation. The audit then surfaced a chain-assumption gap the model had not asked about:
   "native coin ≠ USDC" was implicit, and false on Arc (Elevation.5). The fix is the
   USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
   onboarding note (Appendix A).
@@ -570,8 +567,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   armed window always holds a burnable budget (>= 2 subunits) no larger than its balance; sweeps
   never exceed the armed snapshot; an open window is sweepable whenever Circle's limit and
   minimum allow a burn; a flush moves exactly its nominal amount out of the clone; and USDC is
-  never rescued off a clone. Reverting either the FIND-001 window rule or the self-paid-collector
-  refusal makes it fail. Integration tests execute in CI against the **real
+  never rescued off a clone. Reverting the sweep-minimum window rule (DoS.7.R.1) or the self-paid
+  collector refusal (DoS.2.R.2) makes it fail. Integration tests execute in CI against the **real
   CCTP V2 TokenMessenger and CreateX on an Ethereum mainnet fork** (`test/Fork.t.sol`,
   `test/CreateXFork.t.sol`). Static analysis (Slither 0.11.5) runs in CI under a zero-findings
   policy, with every intentional pattern suppressed inline next to a written justification, and
@@ -590,16 +587,17 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   init code, the anchor of the deterministic cross-chain address scheme (deployed via CreateX).
   Its custody is deliberately NOT part of the security model: the immutable caps bound even a
   fully compromised owner (Elevation.3), which is what lets depositors verify the worst case
-  without trusting any key-management claim — _from `init` onward on each chain_ (above).
+  without trusting any key-management claim — from a verified `init` on each chain (above).
 - **Rotation does not transfer `init` rights.** `transferOwnership` + `acceptOwnership` change
-  storage on the instances that already exist; a Config deployed later on a new chain comes up
-  from the same init code with the ORIGINAL `owner_` as its owner, and only that key can `init`
-  it. Consequences: the original key must stay secured permanently and is never "retired" by a
-  rotation (a holder of it — rotated, leaked or compromised — can wire the USDC path on any
-  not-yet-initialized chain, the pre-`init` window of Elevation.3.R.1); and a _lost_ original key
-  means no further chain can be initialized at the canonical addresses. Initialize Config on every
-  chain the service advertises to integrators before issuing addresses there, so the window
-  is closed where it matters, and keep the original key under the same custody as the active one.
+  storage on the instances that already exist (an already-deployed instance follows its own,
+  possibly rotated, owner); a Config deployed later on a new chain comes up from the same init
+  code with the ORIGINAL `owner_` as its owner, and only that key can `init` it. Consequences: the
+  original key must stay secured permanently and is never "retired" by a rotation — a holder of
+  it, rotated, leaked or compromised, can wire the USDC path on any fresh deployment that has not
+  been initialized (the pre-`init` window of Elevation.3.R.1) — and a _lost_ original key means no
+  further chain can be initialized at the canonical addresses. Initialize Config on every chain
+  the service advertises to integrators before issuing addresses there, so the window is closed
+  where it matters, and keep the original key under the same custody as the active one.
 - **Operators:** hot keys on an allow-list sized for throughput; grant/revoke via `setOperator`
   with no redeploy.
 - **Determinism:** `solc 0.8.35`, `evm_version = shanghai`, optimizer 200 runs, metadata hash
@@ -615,9 +613,9 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   is initialized _there_ and its `usdc` / `tokenMessenger` / `stellarForwarder` have been checked
   against Circle's published addresses, and Circle's `burnLimitsPerMessage(usdc)` there is
   non-zero (`init` checks it once; Circle can change it later) — the owner bound
-  (Elevation.3.R.1) only starts at `init`, and `init` is permanent: a wrong value cannot be
+  (Elevation.3.R.1) only starts at a verified `init`, and `init` is permanent: a wrong value cannot be
   corrected without a new Config, which moves every deposit address. Publish the supported-chain
   list to integrators and remove a chain from it the moment either condition stops holding
-  (DoS.5.R.1). `init` rejects the mis-wirings that could never settle (no code, a V1
-  messenger, a zero burn limit for the token, no Stellar route), but it cannot tell a canonical
-  pair from a plausible impostor — the verification step is what the owner bound rests on.
+  (DoS.5.R.1). `init` rejects the obvious mis-wirings (no code, a V1 messenger, a zero burn limit
+  for the token, no Stellar route) but cannot tell a canonical pair from a plausible impostor — the
+  verification step is what the owner bound rests on.

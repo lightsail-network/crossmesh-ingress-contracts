@@ -97,9 +97,9 @@ contract Config is IDepositConfig {
 
     /// @param owner_ Initial governance address (must be identical on every chain for stable addresses). It is
     ///        part of the init code, so on a chain where Config is deployed later it is again the owner of
-    ///        that fresh instance: {transferOwnership} rotates storage on already-deployed instances only and
-    ///        does not carry to chains initialized afterwards — this key must stay secured for as long as
-    ///        new chains may be onboarded (see the threat model, Appendix A).
+    ///        that fresh instance: {transferOwnership} rotates storage on already-deployed instances only (where
+    ///        it also decides who may {init}) and does not carry to fresh deployments on other chains — this key
+    ///        must stay secured for as long as new chains may be onboarded (see the threat model, Appendix A).
     constructor(address owner_) {
         require(owner_ != address(0), "zero owner");
         owner = owner_;
@@ -111,15 +111,15 @@ contract Config is IDepositConfig {
     }
 
     /// @notice Wire the per-chain USDC path. Callable once, by the owner.
-    /// @dev Partial sanity checks against an honest mis-wiring, which the one-way latch would make permanent (a
+    /// @dev Sanity checks against an honest mis-wiring, which the one-way latch would make permanent (a
     ///      replacement Config moves every deposit address): both contracts must have code; `tokenMessenger_`
     ///      must be CCTP V2 (`messageBodyVersion() == 1` — V1 also has `localMinter()` and a burn limit but
     ///      no `depositForBurnWithHook`, so every settlement would revert), must report a non-zero per-message
     ///      burn limit for `usdc_` through its `localMinter()`, and must have a remote TokenMessenger
-    ///      registered for Stellar ({STELLAR_DOMAIN}). These catch the mistakes that could never settle; they
-    ///      do not authenticate the pair as Circle's canonical one and do not bound a hostile owner before
-    ///      `init` (see the contract notice) — that is what verifying the values against Circle's published
-    ///      addresses before issuing any address is for.
+    ///      registered for Stellar ({STELLAR_DOMAIN}). The checks neither authenticate the pair as Circle's
+    ///      canonical one nor establish full settlement readiness (`stellarForwarder_` is only checked
+    ///      non-zero), and do not bound a hostile owner before `init` (see the contract notice) — verifying
+    ///      the values against Circle's published addresses before issuing any address is what does that.
     /// @param usdc_ The chain's USDC token.
     /// @param tokenMessenger_ The chain's CCTP V2 TokenMessenger.
     /// @param stellarForwarder_ The Stellar forwarder (as bytes32) that receives the CCTP mint.
@@ -252,14 +252,13 @@ contract Config is IDepositConfig {
     /// @notice Set the factory trusted to relay the operator's one-tx deploy+flush. The address set here
     ///         is admitted by {DepositForwarder.flush} as a caller in its own right, so it holds
     ///         operator-tier settlement rights on every clone: it may time settlements (including ahead
-    ///         of a fee-free sweep) and collect the capped fees, but cannot redirect USDC.
-    ///         Because of that privilege, a non-zero `value` must REPORT being wired to this Config: a contract
-    ///         whose `implementation().config()` is this Config. That guards against handing the right to a
-    ///         mistyped or unrelated address; it does not authenticate the contract's code — a contract that
-    ///         merely reports that wiring passes, and holds only the operator-tier right any factory holds: it
-    ///         may time settlements (ahead of a sweep too) and trigger fee collection to `feeCollector`, never
-    ///         redirect USDC. `address(0)` revokes this factory-specific right only; an address that is also an
-    ///         operator, or anyone while `publicFlush` is on, can still flush.
+    ///         of a fee-free sweep) and collect the capped fees, but cannot redirect USDC. A non-zero
+    ///         `value` must therefore REPORT being wired to this Config — a contract whose
+    ///         `implementation().config()` is this Config — which guards against handing the right to a
+    ///         mistyped or unrelated address; it does not authenticate the code, so a contract that merely
+    ///         reports that wiring passes, with that operator-tier right only. `address(0)` revokes this
+    ///         factory-specific right only; an address that is also an operator, or anyone while
+    ///         `publicFlush` is on, can still flush.
     /// @param value New factory; `address(0)` unsets it (revokes the factory's flush rights).
     function setFactory(address value) external onlyOwner {
         // Slither missing-zero-check: zero is a VALID value — it unsets the factory (revokes its flush

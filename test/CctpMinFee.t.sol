@@ -4,7 +4,7 @@ pragma solidity 0.8.35;
 import {Base} from "./Base.t.sol";
 import {DepositForwarder} from "../src/DepositForwarder.sol";
 
-/// The CCTP maxFee allowance against Circle's on-chain minimum fee (FIND-002). TokenMessengerV2's newer
+/// The CCTP maxFee allowance against Circle's on-chain minimum fee (DoS.1.R.1). TokenMessengerV2's newer
 /// implementation (live on Arc) rejects a burn whose maxFee is below `getMinFeeAmount(amount)`; the older
 /// one (Ethereum, Base) has no such function. The forwarder must (a) lift its allowance to the on-chain
 /// minimum without any owner action, so a Circle fee change can never strand flush or the depositor's
