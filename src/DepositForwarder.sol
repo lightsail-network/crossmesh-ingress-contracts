@@ -4,7 +4,7 @@ pragma solidity 0.8.35;
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ITokenMessengerV2, ITokenMinter, IDepositConfig} from "./interfaces.sol";
+import {ITokenMessengerV2, ITokenMessengerV2MinFee, ITokenMinter, IDepositConfig} from "./interfaces.sol";
 
 /// @title DepositForwarder
 /// @notice Trustless EVM→Stellar USDC deposit forwarder (the CWIA implementation). One shared
@@ -114,25 +114,57 @@ contract DepositForwarder {
         return uint8(args[args.length - 1]) != 0;
     }
 
-    /// @dev CCTP burn params for a settlement: the finality threshold and the maxFee allowance
-    ///      (`toBurn × feeRate / 1e6`, each rate bounded by the immutable cap). `useFast` selects fast
-    ///      (confirmed-level attestation, charges a fee) vs standard (finalized, free). {sweep} always
-    ///      passes false — see {_settle}. Fees: https://developers.circle.com/cctp/concepts/fees
-    function _cctpParams(uint256 toBurn, bool useFast) internal view returns (uint32 finality, uint256 maxFee) {
+    /// @dev CCTP burn params for a settlement: the finality threshold and the maxFee allowance. The
+    ///      allowance is the LARGER of the owner-set rate (`toBurn × feeRate / 1e6`) and the messenger's
+    ///      own on-chain minimum ({_cctpMinFee}), both bounded by the immutable `maxCctpFeePpm` cap, applied
+    ///      rounded UP to a whole subunit (so on tiny burns the bound is coarser than the rate: 1% of 2
+    ///      subunits bounds `maxFee` at 1, which is also the smallest allowance a minimum fee demands) — so a
+    ///      Circle minimum-fee change never depends on the owner updating a rate to keep settlement (and
+    ///      the depositor's {sweep} escape hatch) alive, while a minimum ABOVE the cap halts rather than
+    ///      silently paying it. `useFast` selects fast (confirmed-level attestation, charges a fee) vs
+    ///      standard (finalized, free). {sweep} always passes false — see {_settle}.
+    ///      Fees: https://developers.circle.com/cctp/concepts/fees
+    function _cctpParams(address tokenMessenger, uint256 toBurn, bool useFast)
+        internal
+        view
+        returns (uint32 finality, uint256 maxFee)
+    {
         finality = useFast ? FINALITY_FAST : FINALITY_STANDARD;
-        uint256 rate =
-            _min(useFast ? config.cctpFastMaxFeePpm() : config.cctpStandardMaxFeePpm(), config.maxCctpFeePpm());
-        // Round the allowance UP for a non-zero rate: CCTP's TokenMessengerV2 floors a non-zero proportional
-        // fee to a 1-subunit minimum (`_calcMinFeeAmount`), so a maxFee that floored to 0 on a small burn
-        // would be "Insufficient max fee" and revert. maxFee is only a ceiling (the actual fee, <= maxFee,
-        // is what's charged), so rounding up costs nothing.
-        uint256 fee = rate == 0 ? 0 : (toBurn * rate + PPM_DENOM - 1) / PPM_DENOM;
+        uint256 cap = config.maxCctpFeePpm();
+        uint256 rate = _min(useFast ? config.cctpFastMaxFeePpm() : config.cctpStandardMaxFeePpm(), cap);
+        // Round the allowance UP (a zero rate still yields 0): CCTP's TokenMessengerV2 floors a non-zero
+        // proportional fee to a 1-subunit minimum (`_calcMinFeeAmount`), so a maxFee that floored to 0 on a
+        // small burn would be "Insufficient max fee" and revert. maxFee is only a ceiling (the actual fee,
+        // <= maxFee, is what's charged), so rounding up costs nothing.
+        uint256 fee = (toBurn * rate + PPM_DENOM - 1) / PPM_DENOM;
+        // Lift the allowance to the messenger's on-chain minimum (0 where it has none), then bound it by
+        // the cap: the owner cannot starve settlement by setting a rate below Circle's minimum, and nobody
+        // — owner or Circle — can make a settlement pay more than the cap.
+        uint256 chainMin = _cctpMinFee(tokenMessenger, toBurn);
+        if (chainMin > fee) fee = chainMin;
+        fee = _min(fee, (toBurn * cap + PPM_DENOM - 1) / PPM_DENOM);
         // CCTP also requires maxFee < amount (unconditional). At toBurn == 1 a non-zero allowance ceils to
         // maxFee == toBurn and would revert there — even when Circle's ACTUAL fee is 0 (the allowance is only
         // a ceiling, not the charged fee), where a zero maxFee settles fine (e.g. a 1-subunit dust sweep with
         // a standard buffer set). Clamp below the amount so that case succeeds. A toBurn == 1 burn that truly
         // needs a non-zero CCTP fee stays impossible regardless (minFee >= 1 vs maxFee < 1).
         maxFee = fee >= toBurn ? toBurn - 1 : fee;
+    }
+
+    /// @dev The messenger's on-chain minimum `maxFee` for burning `toBurn`
+    ///      ({ITokenMessengerV2MinFee-getMinFeeAmount}), or 0 where the messenger does not expose it. Probed
+    ///      with a tolerant `staticcall` because the selector is absent on older TokenMessengerV2
+    ///      implementations (Ethereum, Base at the time of writing): there the call reverts with empty
+    ///      returndata, and an interface call would revert the whole settlement. Any failure or malformed
+    ///      return falls back to 0, i.e. to the owner-rate allowance alone — exactly the pre-minFee behavior.
+    function _cctpMinFee(address tokenMessenger, uint256 toBurn) internal view returns (uint256) {
+        // Slither low-level-calls: deliberate — the target is the Config-pinned Circle messenger (trusted),
+        // and the selector may legitimately be absent, so the call must be allowed to fail (see @dev).
+        // slither-disable-next-line low-level-calls
+        (bool ok, bytes memory ret) =
+            tokenMessenger.staticcall(abi.encodeCall(ITokenMessengerV2MinFee.getMinFeeAmount, (toBurn)));
+        if (!ok || ret.length != 32) return 0;
+        return abi.decode(ret, (uint256));
     }
 
     /// @notice Settle the balance (capped at CCTP's per-message burn limit) to the recipient. Callable by
@@ -321,8 +353,8 @@ contract DepositForwarder {
     /// @dev Approve and burn `toBurn` to the committed recipient via CCTP, with the finality + maxFee for
     ///      `useFast`. Split out of {_settle} to keep its stack shallow.
     function _burnViaCctp(IERC20 usdc, uint256 toBurn, bool useFast) internal {
-        (uint32 finality, uint256 cctpMaxFee) = _cctpParams(toBurn, useFast);
         address tokenMessenger = config.tokenMessenger();
+        (uint32 finality, uint256 cctpMaxFee) = _cctpParams(tokenMessenger, toBurn, useFast);
         bytes32 forwarder = config.stellarForwarder();
         require(usdc.approve(tokenMessenger, toBurn), "approve failed");
         ITokenMessengerV2(tokenMessenger)
