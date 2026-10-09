@@ -12,7 +12,7 @@ import {IDepositConfig} from "../src/interfaces.sol";
 import {DepositFactory} from "../src/DepositFactory.sol";
 
 /// Recovery of stray native coin / mis-sent non-USDC tokens to the fixed `rescueSink` — operator-gated,
-/// and USDC is never rescuable (principal can only leave via flush/sweep).
+/// and USDC is never rescuable from a clone (principal can only leave via flush/sweep).
 contract RescueTest is Base {
     /// Stray native coin is recoverable to the sink.
     function test_rescue_native() public {
@@ -72,6 +72,49 @@ contract RescueTest is Base {
         vm.deal(fwd, 1 ether);
         vm.prank(NON_OP);
         require(_reverts(fwd, abi.encodeWithSignature("rescueNative()")), "unauthorized rescue must revert");
+    }
+}
+
+/// The implementation is never a deposit address: it has no immutable args, so `_recipient` on it would be
+/// its own runtime bytecode. Settlement must be refused there outright (never a burn toward a garbage
+/// recipient), and USDC mis-sent to it — the only USDC that is not principal — must be recoverable.
+contract RescueImplementationTest is Base {
+    bytes NOT_A_CLONE = abi.encodeWithSignature("Error(string)", "not a clone");
+
+    function _callReverts(address target, bytes memory data, bytes memory expected) internal returns (bool) {
+        (bool ok, bytes memory ret) = target.call(data);
+        return !ok && keccak256(ret) == keccak256(expected);
+    }
+
+    /// Settlement entrypoints refuse to run on the implementation, with or without USDC present, for the
+    /// operator and for anyone else.
+    function test_settlement_refused_on_implementation() public {
+        address self = address(impl);
+        usdc.mint(self, 100e6);
+        require(_callReverts(self, abi.encodeWithSignature("flush()"), NOT_A_CLONE), "flush on impl");
+        require(_callReverts(self, abi.encodeWithSignature("requestSweep()"), NOT_A_CLONE), "requestSweep on impl");
+        require(_callReverts(self, abi.encodeWithSignature("sweep()"), NOT_A_CLONE), "sweep on impl");
+        vm.prank(NON_OP);
+        require(_callReverts(self, abi.encodeWithSignature("requestSweep()"), NOT_A_CLONE), "anyone, on impl");
+        require(usdc.balanceOf(self) == 100e6, "nothing burned");
+        require(tm.nonceCounter() == 0, "no CCTP message was produced");
+    }
+
+    /// USDC mis-sent to the implementation is rescuable to the sink — operator only — while the same call on
+    /// a clone still refuses (principal).
+    function test_usdc_rescuable_from_implementation_only() public {
+        address self = address(impl);
+        usdc.mint(self, 100e6);
+        vm.prank(NON_OP);
+        require(_reverts(self, abi.encodeWithSignature("rescueERC20(address)", address(usdc))), "operator only");
+
+        DepositForwarder(self).rescueERC20(address(usdc));
+        require(usdc.balanceOf(self) == 0 && usdc.balanceOf(SINK) == 100e6, "mis-sent USDC recovered to sink");
+
+        address fwd = factory.deploy(_r(), 14, false);
+        usdc.mint(fwd, 100e6);
+        require(_reverts(fwd, abi.encodeWithSignature("rescueERC20(address)", address(usdc))), "clone USDC stays bound");
+        require(usdc.balanceOf(fwd) == 100e6, "clone principal untouched");
     }
 }
 
