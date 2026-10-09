@@ -8,7 +8,13 @@
 - **In scope (the audit target):** the EVM contracts in this repository (`src/`) — `Config`,
   `DepositForwarder` (the CWIA implementation behind every deposit address), and
   `DepositFactory` — as built by the toolchain pinned in `foundry.toml` (Appendix A).
-- **Out of scope, modeled as adversarial or as a trusted dependency:** the integrator
+- **Parties:** _Cross Mesh_ is the service that operates the contracts — it holds the `Config`
+  owner and operator keys, runs the Stellar relayer, and issues deposit addresses to
+  _integrators_ over its API. Integrators are its B2B clients — wallet providers, other
+  applications, or anyone else who obtains deposit addresses through the API: they show those
+  addresses to _depositors_ (their end users) and may re-derive them offline. Neither party is
+  trusted with principal.
+- **Out of scope, modeled as adversarial or as a trusted dependency:** the Cross Mesh
   backend and operator/owner key custody (modeled as adversarial), and Circle's CCTP
   infrastructure on both sides — including the Stellar-side `CctpForwarder` that executes the
   final hop, which is **provided by Circle** as part of its CCTP deployment
@@ -47,7 +53,7 @@ working as a public good with no operator (see DoS.1.R.2).
 | Element (DFD type)                                         | Role                                                                                                                                                                                                                                  |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Depositor wallet (external entity)                         | Sends USDC; may also drive the escape hatch                                                                                                                                                                                           |
-| Integrator backend (external entity)                       | Derives & distributes deposit addresses; validates strkeys; **untrusted for principal**                                                                                                                                               |
+| Service backend (Cross Mesh) + integrator SDK (external entity) | Cross Mesh's backend derives deposit addresses and issues them to integrators over its API; integrators re-derive and verify them offline (open-source SDK); both validate strkeys; **untrusted for principal** |
 | Operator hot keys (external entity)                        | Allow-listed settlement triggers (`flush`)                                                                                                                                                                                            |
 | Owner (external entity)                                    | Governance over `Config`, bounded by immutable caps; two-step transfer                                                                                                                                                                |
 | `DepositFactory` (process)                                 | Deterministic clone deployment (`deploy`, permissionless) + operator one-tx `deployAndFlush`                                                                                                                                          |
@@ -62,8 +68,8 @@ working as a public good with no operator (see DoS.1.R.2).
 
 ```mermaid
 flowchart TB
-    subgraph Z2["Zone B — Integrator backend (UNTRUSTED for principal)"]
-        BE["Integrator backend\naddress distribution + strkey validation"]
+    subgraph Z2["Zone B — Cross Mesh backend + integrators (UNTRUSTED for principal)"]
+        BE["Cross Mesh backend → integrators\naddress issuance + strkey validation"]
     end
     subgraph Z1["Zone A — Depositor (untrusted)"]
         U["Depositor EVM wallet"]
@@ -116,9 +122,9 @@ past the system's trust surface, delivery there is the end state this model prot
 
 Numbered flows (threats in §2 reference these):
 
-1. The integrator derives the deposit address for `(recipient, index, fast)` off-chain and
-   **cross-verifies it against the on-chain `factory.computeAddress`**, then hands it to the
-   depositor.
+1. Cross Mesh's backend derives the deposit address for `(recipient, index, fast)` off-chain
+   and **cross-verifies it against the on-chain `factory.computeAddress`**, then issues it to
+   the integrator, which hands it to the depositor.
 2. The depositor sends USDC to the address — which may not be deployed yet (counterfactual).
 3. The operator settles via `factory.deployAndFlush` (deploy if needed, then `flush`).
    **3′ (escape hatch):** if the operator never does, anyone — typically the depositor — calls
@@ -148,7 +154,7 @@ Numbered flows (threats in §2 reference these):
 
 | #   | Boundary                                           | Trust stance                                                                                                                                        |
 | --- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| TB1 | Depositor ↔ integrator (flow 1)                    | **Untrusted.** A lying address distributor is the one path to principal loss (Spoof.1)                                                              |
+| TB1 | Depositor ↔ integrator ↔ Cross Mesh (flow 1)  | **Untrusted.** A lying address distributor is the one path to principal loss (Spoof.1)                                                              |
 | TB2 | Anyone ↔ deposit address (flows 2, 3′)             | Permissionless by design; safe because no caller input chooses amount or destination                                                                |
 | TB3 | Operator/factory ↔ `flush` (flow 3)                | Semi-trusted: may _time_ settlements and charge _capped_ fees; cannot redirect                                                                      |
 | TB4 | Owner ↔ `Config` setters                           | Semi-trusted: bounded by immutable caps; cannot touch the USDC path after `init`                                                                    |
@@ -226,7 +232,7 @@ Every treatment below is **implemented and tested** unless marked _risk accepted
   implementation addresses plus the clone's immutable args (`recipient ++ fast`, salt
   `keccak256(recipient, index)`) — so anyone can recompute it fully **offline**, with no RPC and
   no trust in any service. The contracts additionally expose `computeAddress(recipient, index,
-fast)` and `isDeployed` as the on-chain reference implementation. **Third-party integrators
+fast)` and `isDeployed` as the on-chain reference implementation. **Integrators
   MUST cross-verify every address they hand out** — the offline derivation and the on-chain
   factory must agree. The reference backend asserts identical derivation vectors on both paths
   (`test/CwiaVector.t.sol`).
