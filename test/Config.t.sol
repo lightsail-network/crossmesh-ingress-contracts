@@ -6,6 +6,8 @@ import {Config} from "../src/Config.sol";
 import {IDepositConfig} from "../src/interfaces.sol";
 import {DepositForwarder} from "../src/DepositForwarder.sol";
 import {DepositFactory} from "../src/DepositFactory.sol";
+import {MockTokenMessenger} from "./mocks/MockTokenMessenger.sol";
+import {MockTokenMinter} from "./mocks/MockTokenMinter.sol";
 
 /// Config governance: immutable-cap clamps, owner-only setters, the `feeCollector` / `rescueSink`
 /// non-zero guards, the one-time `init`, and ownership transfer.
@@ -132,6 +134,42 @@ contract ConfigTest is Base {
             ),
             "init must reject a zero address"
         );
+    }
+
+    /// `init` refuses a mis-wired USDC path — the latch is permanent, so an honest mistake must fail loudly:
+    /// no code at either address, or a messenger whose minter cannot burn that token. It does not (and cannot)
+    /// judge whether a hostile owner's live pair is the canonical one.
+    function test_init_rejects_miswired_path() public {
+        bytes4 sel = bytes4(keccak256("init(address,address,bytes32)"));
+        Config c = new Config(address(this));
+        require(_reverts(address(c), abi.encodeWithSelector(sel, NON_OP, address(tm), FORWARDER)), "usdc without code");
+        require(
+            _reverts(address(c), abi.encodeWithSelector(sel, address(usdc), NON_OP, FORWARDER)),
+            "messenger without code"
+        );
+
+        MockTokenMessenger tm2 = new MockTokenMessenger(); // no minter wired
+        require(_reverts(address(c), abi.encodeWithSelector(sel, address(usdc), address(tm2), FORWARDER)), "no minter");
+        MockTokenMinter m2 = new MockTokenMinter(); // minter that cannot burn this token
+        tm2.setLocalMinter(address(m2));
+        require(
+            _reverts(address(c), abi.encodeWithSelector(sel, address(usdc), address(tm2), FORWARDER)), "zero burn limit"
+        );
+
+        m2.setBurnLimit(address(usdc), 1); // the pair can burn the token…
+        tm2.setRemoteTokenMessenger(27, bytes32(0)); // …but has no Stellar route
+        (bool ok, bytes memory ret) =
+            address(c).call(abi.encodeWithSelector(sel, address(usdc), address(tm2), FORWARDER));
+        require(
+            !ok && keccak256(ret) == keccak256(abi.encodeWithSignature("Error(string)", "no stellar route")), "route"
+        );
+        tm2.setRemoteTokenMessenger(27, bytes32(uint256(1)));
+        tm2.setMessageBodyVersion(0); // Circle's V1 messenger: has a minter and a limit, but no hooked burn
+        (ok, ret) = address(c).call(abi.encodeWithSelector(sel, address(usdc), address(tm2), FORWARDER));
+        require(!ok && keccak256(ret) == keccak256(abi.encodeWithSignature("Error(string)", "not CCTP V2")), "v1");
+        tm2.setMessageBodyVersion(1);
+        c.init(address(usdc), address(tm2), FORWARDER);
+        require(c.initialized() && c.tokenMessenger() == address(tm2), "live V2 pair with a Stellar route accepted");
     }
 
     /// Ownership transfer is two-step (propose → accept), so a mistyped address can't brick governance.

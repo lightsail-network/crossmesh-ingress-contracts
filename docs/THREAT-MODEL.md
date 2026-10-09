@@ -32,6 +32,10 @@ fund-moving behavior is to bridge its balance, via Circle CCTP V2, to one fixed 
 The recipient (a Stellar strkey, plus a 1-byte fast/standard flag) is a
 **clones-with-immutable-args (CWIA) immutable argument**, so it is committed inside the address
 itself: no key, admin, or upgrade path can redirect the principal — before _or_ after deployment.
+The bound on the _owner_ (TB4) holds on a chain from a _verified_ `Config.init` onward: addresses
+are computable everywhere, but an address is handed out for a chain only once Config is initialized
+there and its wiring has been checked against Circle's published addresses (Elevation.3.R.1,
+Appendix A).
 
 Two settlement entrypoints, both flowing through internal `_settle`, **neither taking a
 caller-chosen amount or destination**:
@@ -159,7 +163,7 @@ Numbered flows (threats in §2 reference these):
 | TB1 | Depositor ↔ integrator ↔ Cross Mesh (flow 1)  | **Untrusted.** A lying address distributor is the one path to principal loss (Spoof.1)                                                              |
 | TB2 | Anyone ↔ deposit address (flows 2, 3′)             | Permissionless by design; safe because no caller input chooses amount or destination                                                                |
 | TB3 | Operator/factory ↔ `flush` (flow 3)                | Semi-trusted: may _time_ settlements and charge _capped_ fees; cannot redirect                                                                      |
-| TB4 | Owner ↔ `Config` setters                           | Semi-trusted: bounded by immutable caps; cannot touch the USDC path after `init`                                                                    |
+| TB4 | Owner ↔ `Config` setters                           | Semi-trusted: bounded by immutable caps; cannot touch the USDC path after `init`. The path itself is the owner's choice at `init` (sanity-checked, not authenticated), so addresses are issued for a chain only once it is initialized AND the wiring is verified against Circle's published addresses (Elevation.3.R.1) |
 | TB5 | EVM contracts ↔ Circle CCTP (`TokenMessengerV2`, attestation, `CctpForwarder`) ↔ recipient (flows 5–7) | Trusted bridge dependency, pinned at `init`; the burn limit is probed before every settlement, and the hookData this repo emits matches Circle's published layout byte-for-byte (`_hookData`) |
 
 ---
@@ -264,8 +268,14 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   clones have no setters, no initializer, and no upgrade path. Changing the recipient means a
   _different address_.
 - **Tamper.2.R.1** — The USDC path is a one-time `init` latch (owner-only, zero-checked,
-  `initialized` flag); immutable thereafter. Governing rule documented in `Config`: only values
-  that provably cannot redirect USDC may be mutable.
+  `initialized` flag); immutable thereafter. `init` also applies partial sanity checks — both
+  addresses must have code, the messenger must be CCTP V2 (`messageBodyVersion() == 1`; V1 has a
+  minter and a limit too, but no hooked burn), its `localMinter()` must report a non-zero burn
+  limit for the token, and it must have a remote TokenMessenger registered for Stellar — so the
+  honest mistakes that could never settle cannot be latched permanently. They do not authenticate
+  the pair as Circle's canonical one, nor judge a hostile owner's inputs (Elevation.3.R.1).
+  Governing rule documented in `Config`: only values that provably cannot redirect USDC may be
+  mutable.
 - **Tamper.3.R.1** — Immutable caps clamp every tunable: `maxSetupFee`/`maxBaseFee` 100 USDC,
   `maxFeePpm` 1%, `minSweepDelay` 1 hour / `maxSweepDelay` 7 days, `maxCctpFeePpm` 1%. A depositor
   can verify the worst case on-chain before funding.
@@ -332,7 +342,8 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   (`burn unsupported`) instead of burning into a dead bridge.
 - **DoS.5.R.2** — _Risk accepted (deliberate trade-off):_ if Circle permanently retired the
   pinned `TokenMessengerV2`, `flush` and `sweep` would both revert and USDC would sit in deposit
-  addresses. The _absence_ of any admin USDC-recovery path is what makes the design rug-proof;
+  addresses. The _absence_ of any admin USDC-recovery path is what keeps principal out of every
+  key's reach after a verified `init`;
   operational mitigation is monitoring Circle deprecation notices per chain.
 - **DoS.5.R.3** — _Risk accepted (same trade-off):_ `TokenMessengerV2` enforces a caller
   denylist, and every settlement calls it with the deposit address as `msg.sender`. If Circle
@@ -416,6 +427,19 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   CCTP fee allowance: the burn's `maxFee` is lifted to the messenger's on-chain minimum regardless
   of the owner rates (DoS.1.R.1). Two-step ownership transfer (`transferOwnership` +
   `acceptOwnership`) prevents accidental loss; `transferOwnership(0)` cancels a pending transfer.
+  _Scope of the bound — accepted residual:_ it applies on a chain from a _verified_ `init`
+  onward — `init` only sanity-checks its inputs, so a hostile pair latched at `init` stays hostile
+  for every later deposit too; what makes post-`init` deposits safe is the verification of the
+  latched values against Circle's published addresses before any address is issued. Deposit
+  addresses are computable on every chain before Config is initialized there, and USDC that
+  reaches one before a verified `init` has its exit decided by the owner's `init` values: a decoy
+  `usdc` would let `rescueERC20` move the real token, a hostile `tokenMessenger` would receive
+  every settlement's burn approval. No immutable cap covers that window (a compiled per-chain allow-list
+  would, at the cost of moving every address whenever a chain is added — rejected). Mitigation is
+  operational: an address is issued for a chain only after `Config.initialized()` is true there and
+  `usdc`/`tokenMessenger`/`stellarForwarder` match Circle's published addresses (Appendix A), and
+  `init` refuses the mis-wirings that could never settle (Tamper.2.R.1). Covered by `test/Config.t.sol`
+  (`test_init_rejects_miswired_path`).
 - **Elevation.4.R.1** — `requestSweep` snapshots `sweepCap = balance` at arm time: the fee-free
   window only ever covers funds present _when armed_; deposits arriving later need a fresh
   request (a fresh delay — the one-extra-delay residual of DoS.7.R.1), and `flush` draws the armed
@@ -459,7 +483,7 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   USDC-balance post-condition in `rescueNative`, and the assumption is now explicit in the
   onboarding note (Appendix A).
 - **Are the treatments adequate?** Every implemented mitigation is exercised by the test suite:
-  88 unit tests across the Foundry suites in `test/`,
+  89 unit tests across the Foundry suites in `test/`,
   including a dedicated **wire-contract suite** (`test/CctpArgs.t.sol`) that byte-locks the
   hookData layout and every burn-call argument handed to Circle, an event-contract test locking
   every `Settled` field on both settlement paths, and **fuzzed property tests**
@@ -496,3 +520,10 @@ fast)` produce the identical address and behavior; there is no initializer, so n
   (Elevation.5); that is the guard working, not a fault to work around. The guard anchors on
   `config.usdc()` being that shared-ledger view, so `init` must point at it (an unrelated token
   address would silence the guard).
+- **Issuing addresses per chain:** never hand out a deposit address for a chain before `Config`
+  is initialized _there_ and its `usdc` / `tokenMessenger` / `stellarForwarder` have been checked
+  against Circle's published addresses — the owner bound (Elevation.3.R.1) only starts at `init`,
+  and `init` is permanent: a wrong value cannot be corrected without a new Config, which moves
+  every deposit address. `init` rejects the mis-wirings that could never settle (no code, a V1
+  messenger, a zero burn limit for the token, no Stellar route), but it cannot tell a canonical
+  pair from a plausible impostor — the verification step is what the owner bound rests on.

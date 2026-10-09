@@ -6,6 +6,7 @@ import {DepositForwarder} from "../src/DepositForwarder.sol";
 import {DepositFactory} from "../src/DepositFactory.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 import {MockTokenMessenger} from "./mocks/MockTokenMessenger.sol";
+import {MockTokenMinter} from "./mocks/MockTokenMinter.sol";
 
 interface Vm {
     function chainId(uint256) external;
@@ -65,6 +66,12 @@ contract CrossChainAddressTest {
         vm.chainId(1);
         MockUSDC usdcA = new MockUSDC();
         MockTokenMessenger tmA = new MockTokenMessenger();
+        {
+            // init requires a pair that can burn the token (scoped: this test is near the stack limit)
+            MockTokenMinter minterA = new MockTokenMinter();
+            minterA.setBurnLimit(address(usdcA), 1_000_000_000e6);
+            tmA.setLocalMinter(address(minterA));
+        }
         require(dep.deploy(SALT_CONFIG, cfgInit) == cfg, "config off-prediction");
         Config(cfg).init(address(usdcA), address(tmA), FORWARDER);
         require(dep.deploy(SALT_IMPL, implInit) == impl, "impl off-prediction");

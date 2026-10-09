@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.35;
 
+/// @dev CCTP domain id of Stellar — the destination of every burn, and the route `Config.init` verifies.
+uint32 constant STELLAR_DOMAIN = 27;
+
 /// @title ITokenMessengerV2
 /// @notice Minimal interface to Circle CCTP V2's TokenMessenger — only the hooked burn entrypoint used here.
 /// @dev V2's `depositForBurnWithHook` returns NOTHING (unlike V1's `uint64` nonce). Declaring a return value
@@ -41,6 +44,14 @@ interface ITokenMessengerV2 {
     /// @notice The local TokenMinter that enforces per-message burn limits.
     /// @return The TokenMinter address.
     function localMinter() external view returns (address);
+
+    /// @notice The message-body version this messenger emits: 1 for CCTP V2, 0 for V1. `Config.init` requires 1,
+    ///         since V1 also exposes `localMinter()` and a burn limit but lacks `depositForBurnWithHook`.
+    function messageBodyVersion() external view returns (uint32);
+
+    /// @notice The remote TokenMessenger registered for `domain` (zero = no route). `Config.init` requires a
+    ///         route for {STELLAR_DOMAIN}.
+    function remoteTokenMessengers(uint32 domain) external view returns (bytes32);
 }
 
 /// @title ITokenMessengerV2MinFee
@@ -73,8 +84,12 @@ interface ITokenMinter {
 /// @title IDepositConfig
 /// @notice Read interface for the shared per-chain `Config` that every `DepositForwarder` consumes.
 /// @dev Immutable wiring + immutable caps + owner-tunable values, each clamped to its cap. See `Config`.
+///      The wiring is immutable from `Config.init` onward; before `init` on a chain it is unset and the
+///      owner's choice, so the caps below bound the owner only for deposits made after a VERIFIED `init`
+///      there — one whose values were checked against Circle's published addresses; `init` itself performs
+///      partial sanity checks only.
 interface IDepositConfig {
-    // --- immutable wiring (the USDC path) ---
+    // --- immutable wiring (the USDC path; set once by `Config.init`, immutable thereafter) ---
 
     /// @notice USDC token bridged by every forwarder on this chain.
     function usdc() external view returns (address);
