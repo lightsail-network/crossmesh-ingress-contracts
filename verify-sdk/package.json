@@ -1,0 +1,45 @@
+{
+  "name": "@lightsail-network/crossmesh-ingress-verify-sdk",
+  "version": "0.0.1-beta.1",
+  "description": "Offline verification of Cross Mesh Ingress deposit addresses and their Stellar recipients",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lightsail-network/crossmesh-ingress-contracts.git",
+    "directory": "verify-sdk"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE.stellar-sdk"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@noble/hashes": "2.4.0"
+  },
+  "devDependencies": {
+    "@stellar/stellar-sdk": "17.2.1",
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3",
+    "viem": "2.57.7",
+    "vitest": "5.0.4"
+  }
+}
