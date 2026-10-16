@@ -1,6 +1,6 @@
 {
   "name": "@lightsail-network/crossmesh-ingress-verify-sdk",
-  "version": "0.0.1-beta.1",
+  "version": "1.0.0",
   "description": "Offline verification of Cross Mesh Ingress deposit addresses and their Stellar recipients",
   "license": "MIT",
   "type": "module",
