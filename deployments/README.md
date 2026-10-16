@@ -1,12 +1,36 @@
-# Source verification inputs
+# Deployments and source verification
 
-Solidity standard-JSON inputs for verifying the three contracts on Etherscan / Polygonscan (Verify &
-Publish). They are generated from commit `156581d` with OpenZeppelin Contracts v5.6.1 (the pinned
-submodule) and the settings in `foundry.toml`.
+Deployed addresses, and the Solidity standard-JSON inputs for verifying the contracts on Etherscan /
+Polygonscan (Verify & Publish). Every deployment below is built from commit `156581d` with OpenZeppelin
+Contracts v5.6.1 (the pinned submodule) and the settings in `foundry.toml`.
 
-## Form fields
+## Addresses
 
-The same for all three contracts:
+Each network's contracts are at the same address on every chain it is deployed on.
+
+### Mainnet (delivers to Stellar mainnet)
+
+Deployed on Ethereum (chain ID 1) and Polygon PoS (chain ID 137).
+
+| Contract | Address |
+| --- | --- |
+| `Config` | `0xcB9014b9AC3Fc9BC8516F3B75464703dba30234c` |
+| `DepositForwarder` (implementation) | `0xa49eFd75214749ce8d0f6d838a7a44A90E2A9A45` |
+| `DepositFactory` | `0x8E6Ada2CFF0D86F5baFa575D11529FbFb50702e4` |
+
+### Testnet (delivers to Stellar testnet)
+
+Deployed on Ethereum Sepolia (chain ID 11155111) and Polygon Amoy (chain ID 80002).
+
+| Contract | Address |
+| --- | --- |
+| `Config` | `0xac4a1A66F69820289A879F5D5D57828BF92cDa26` |
+| `DepositForwarder` (implementation) | `0xb0216D95AFf228EB8b3A53C58f780D115eFfEC0F` |
+| `DepositFactory` | `0xAD93f57DeA4F6bE812c0e1790dF5D3d1161BEd09` |
+
+## Verification form fields
+
+The same for every contract on every network:
 
 | Field | Value |
 | --- | --- |
@@ -14,13 +38,20 @@ The same for all three contracts:
 | Compiler Version | `v0.8.35+commit.47b9dedd` |
 | Open Source License Type | MIT License (MIT) |
 
-Per contract (the constructor arguments are ABI-encoded, without `0x`):
+Mainnet and testnet use the same input files; only the constructor arguments differ (ABI-encoded,
+without `0x`):
 
-| Contract | File | Constructor | Constructor Arguments |
-| --- | --- | --- | --- |
-| `src/Config.sol:Config` | `Config.standard-input.json` | `constructor(address owner_)` — the owner | `000000000000000000000000072b521fa372771e69af11a0f74804b85146e41f` |
-| `src/DepositForwarder.sol:DepositForwarder` | `DepositForwarder.standard-input.json` | `constructor(IDepositConfig config_)` — the Config | `000000000000000000000000cb9014b9ac3fc9bc8516f3b75464703dba30234c` |
-| `src/DepositFactory.sol:DepositFactory` | `DepositFactory.standard-input.json` | `constructor(address implementation_)` — the DepositForwarder implementation | `000000000000000000000000a49efd75214749ce8d0f6d838a7a44a90e2a9a45` |
+| Contract | File | Constructor |
+| --- | --- | --- |
+| `src/Config.sol:Config` | `Config.standard-input.json` | `constructor(address owner_)` — the owner |
+| `src/DepositForwarder.sol:DepositForwarder` | `DepositForwarder.standard-input.json` | `constructor(IDepositConfig config_)` — the Config |
+| `src/DepositFactory.sol:DepositFactory` | `DepositFactory.standard-input.json` | `constructor(address implementation_)` — the DepositForwarder implementation |
+
+| Contract | Mainnet constructor arguments | Testnet constructor arguments |
+| --- | --- | --- |
+| `Config` | `000000000000000000000000072b521fa372771e69af11a0f74804b85146e41f` | `0000000000000000000000007b08fea04d4a89bcac93d7bfe667eabb35dd400e` |
+| `DepositForwarder` | `000000000000000000000000cb9014b9ac3fc9bc8516f3b75464703dba30234c` | `000000000000000000000000ac4a1a66f69820289a879f5d5d57828bf92cda26` |
+| `DepositFactory` | `000000000000000000000000a49efd75214749ce8d0f6d838a7a44a90e2a9a45` | `000000000000000000000000b0216d95aff228eb8b3a53c58f780d115effec0f` |
 
 The contracts are created through CreateX, so the explorer may not detect the constructor arguments on
 its own; paste them from the table.
