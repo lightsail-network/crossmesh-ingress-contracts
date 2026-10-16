@@ -1,0 +1,42 @@
+name: Publish Verify SDK
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    # Releases of this repository also cover the contracts; only verify-sdk-v* tags publish the SDK.
+    if: startsWith(github.event.release.tag_name, 'verify-sdk-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC)
+    defaults:
+      run:
+        working-directory: verify-sdk
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Check that the release tag matches package.json
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="verify-sdk-v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "release tag $TAG does not match package.json version $VERSION"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      # prepublishOnly runs typecheck, test and build. A prerelease version (1.1.0-beta.1) is published under its
+      # prerelease tag (beta), never as latest.
+      - run: |
+          TAG=$(node -p "const m = /-([0-9A-Za-z]+)/.exec(require('./package.json').version); m ? m[1] : 'latest'")
+          npm publish --tag "$TAG"

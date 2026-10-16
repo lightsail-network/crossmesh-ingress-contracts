@@ -1,0 +1,41 @@
+name: Verify SDK
+
+on:
+  push:
+    branches: [main]
+    paths: ["verify-sdk/**", ".github/workflows/verify-sdk.yml"]
+  pull_request:
+    paths: ["verify-sdk/**", ".github/workflows/verify-sdk.yml"]
+
+jobs:
+  verify-sdk:
+    name: typecheck · test · build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: verify-sdk
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: verify-sdk/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (incl. live computeAddress on the deployed mainnet and testnet factories)
+        env:
+          # Override with private RPC secrets for reliability; defaults to public endpoints.
+          ETHEREUM_RPC: ${{ secrets.ETHEREUM_RPC || 'https://ethereum-rpc.publicnode.com' }}
+          POLYGON_RPC: ${{ secrets.POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com' }}
+          SEPOLIA_RPC: ${{ secrets.SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com' }}
+          AMOY_RPC: ${{ secrets.AMOY_RPC || 'https://polygon-amoy-bor-rpc.publicnode.com' }}
+        run: npm test
+
+      - name: Build
+        run: npm run build
