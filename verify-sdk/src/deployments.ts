@@ -14,12 +14,12 @@ export interface Deployment {
 
 // Frozen so no other code in the process can repoint them.
 export const DEPLOYMENTS: Readonly<Record<Network, Readonly<Deployment> | null>> = Object.freeze({
-  // Ethereum and Polygon PoS (→ Stellar mainnet).
+  // → Stellar mainnet. Chains: deployments/README.md in the repository.
   mainnet: Object.freeze({
     factory: "0x8E6Ada2CFF0D86F5baFa575D11529FbFb50702e4",
     implementation: "0xa49eFd75214749ce8d0f6d838a7a44A90E2A9A45",
   }),
-  // Ethereum Sepolia and Polygon Amoy (→ Stellar testnet).
+  // → Stellar testnet. Chains: deployments/README.md in the repository.
   testnet: Object.freeze({
     factory: "0xAD93f57DeA4F6bE812c0e1790dF5D3d1161BEd09",
     implementation: "0xb0216D95AFf228EB8b3A53C58f780D115eFfEC0F",
