@@ -63,15 +63,15 @@ That code is Apache-2.0 (`LICENSE.stellar-sdk`); the rest of the package is MIT.
 
 ## Networks
 
-| Network | EVM chains | Stellar | `DepositFactory` | `DepositForwarder` implementation |
-| --- | --- | --- | --- | --- |
-| `mainnet` | Ethereum, Polygon PoS | public | `0x8E6Ada2CFF0D86F5baFa575D11529FbFb50702e4` | `0xa49eFd75214749ce8d0f6d838a7a44A90E2A9A45` |
-| `testnet` | Ethereum Sepolia, Polygon Amoy | testnet | `0xAD93f57DeA4F6bE812c0e1790dF5D3d1161BEd09` | `0xb0216D95AFf228EB8b3A53C58f780D115eFfEC0F` |
+`network: "mainnet"` is the deployment that delivers to Stellar mainnet, `"testnet"` the one that delivers to
+Stellar testnet. The contract addresses and the EVM chains each network is deployed on are listed in
+[deployments/README.md](https://github.com/lightsail-network/crossmesh-ingress-contracts/blob/main/deployments/README.md);
+USDC sent on a chain that is not listed there is not delivered.
 
 The contracts are immutable and deployed at the same addresses on every chain of a network, so a deposit
-address is the same on all of them. The addresses are hardcoded on purpose: a cross-check must not take
-the factory address from the same party that issued the deposit address. USDC sent on a chain that is not
-listed is not delivered.
+address is the same on all of them. The factory and implementation addresses are hardcoded in
+`src/deployments.ts` on purpose: a cross-check must not take them from the same party that issued the deposit
+address.
 
 ## Development
 
@@ -79,7 +79,7 @@ listed is not delivered.
 npm ci
 npm run typecheck
 npm test
-ETHEREUM_RPC=https://ethereum-rpc.publicnode.com POLYGON_RPC=https://polygon-bor-rpc.publicnode.com \
+ETHEREUM_RPC=https://ethereum-rpc.publicnode.com POLYGON_RPC=https://polygon-bor-rpc.publicnode.com BASE_RPC=https://base-rpc.publicnode.com \
   SEPOLIA_RPC=https://ethereum-sepolia-rpc.publicnode.com AMOY_RPC=https://polygon-amoy-bor-rpc.publicnode.com \
   npm test # also checks against the deployed factories
 ```

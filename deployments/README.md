@@ -1,7 +1,7 @@
 # Deployments and source verification
 
 Deployed addresses, and the Solidity standard-JSON inputs for verifying the contracts on Etherscan /
-Polygonscan (Verify & Publish). Every deployment below is built from commit `156581d` with OpenZeppelin
+Polygonscan / Basescan (Verify & Publish). Every deployment below is built from commit `156581d` with OpenZeppelin
 Contracts v5.6.1 (the pinned submodule) and the settings in `foundry.toml`.
 
 ## Addresses
@@ -10,7 +10,7 @@ Each network's contracts are at the same address on every chain it is deployed o
 
 ### Mainnet (delivers to Stellar mainnet)
 
-Deployed on Ethereum (chain ID 1) and Polygon PoS (chain ID 137).
+Deployed on Ethereum (chain ID 1), Polygon PoS (chain ID 137) and Base (chain ID 8453).
 
 | Contract | Address |
 | --- | --- |

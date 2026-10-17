@@ -8,6 +8,7 @@ import { randomAccount, randomContract, randomMuxedAccount } from "./helpers.js"
 const CHAINS: { name: string; env: string; network: Network }[] = [
   { name: "Ethereum", env: "ETHEREUM_RPC", network: "mainnet" },
   { name: "Polygon PoS", env: "POLYGON_RPC", network: "mainnet" },
+  { name: "Base", env: "BASE_RPC", network: "mainnet" },
   { name: "Ethereum Sepolia", env: "SEPOLIA_RPC", network: "testnet" },
   { name: "Polygon Amoy", env: "AMOY_RPC", network: "testnet" },
 ];
