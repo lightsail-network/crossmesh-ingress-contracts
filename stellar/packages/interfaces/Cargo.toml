@@ -1,0 +1,15 @@
+[package]
+name = "crossmesh-interfaces"
+description = "Shared types and cross-contract clients for the Cross Mesh XLM-delivery vaults"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }

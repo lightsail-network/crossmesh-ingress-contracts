@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/interfaces",
+    "packages/test-support",
+    "contracts/vault",
+    "contracts/vault-factory",
+    "contracts/aquarius-filler",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/lightsail-network/crossmesh-ingress-contracts"
+rust-version = "1.91"
+
+[workspace.dependencies]
+soroban-sdk = "29.0.1"
+crossmesh-interfaces = { path = "packages/interfaces" }
+vault = { path = "contracts/vault" }
+aquarius-filler = { path = "contracts/aquarius-filler" }
+test-support = { path = "packages/test-support" }
+
+# Standard Soroban release profile: small, deterministic wasm with overflow checks kept on.
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true

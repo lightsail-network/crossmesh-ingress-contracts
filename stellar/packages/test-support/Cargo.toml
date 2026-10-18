@@ -1,0 +1,17 @@
+[package]
+name = "test-support"
+description = "Test-only helpers: classic account/trustline ledger entries and the native XLM SAC in the Soroban test env"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

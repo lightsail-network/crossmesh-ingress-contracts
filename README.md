@@ -20,6 +20,14 @@ so anyone — including the depositor — can submit it from any funded Stellar 
 Forwarding Service does not serve Stellar, which is why the `hookData` magic field is zero (Circle's
 prescribed value for `CctpForwarder`). See the threat model, DoS.1.R.3.
 
+## XLM delivery for new Stellar users
+
+`stellar/` adds a second delivery mode on top of the unchanged EVM contracts: the deposit address commits a
+per-user Soroban **vault** as its Stellar recipient, and a relayer-triggered, oracle-bounded swap turns the
+delivered USDC into XLM that creates the recipient's account. The EVM contracts, Circle's forwarder and the
+USDC→USDC product are untouched. Entry point: [stellar/README.md](stellar/README.md); design, trust model and
+address derivation: [stellar/docs/DESIGN.md](stellar/docs/DESIGN.md).
+
 ## Build & test
 
 ```sh

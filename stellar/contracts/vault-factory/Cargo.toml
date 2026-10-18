@@ -1,0 +1,23 @@
+[package]
+name = "vault-factory"
+description = "Deploys per-owner Vaults at owner-derived addresses and holds the immutable configuration (Cross Mesh Ingress, Stellar side)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+crossmesh-interfaces = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+test-support = { workspace = true }
+vault = { workspace = true }
+aquarius-filler = { workspace = true }

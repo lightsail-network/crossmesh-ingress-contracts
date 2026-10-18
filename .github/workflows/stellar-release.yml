@@ -1,0 +1,78 @@
+name: Stellar contracts release
+
+# Tag `stellar-v<version>` → reproducible wasm builds published as a GitHub release with SHA256 hashes
+# and build attestations (StellarExpert's workflow). Deploy mainnet contracts from these artifacts only:
+# StellarExpert validates a deployed contract's source by matching its wasm hash against a release.
+on:
+  push:
+    tags:
+      - "stellar-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: fmt · clippy · test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: stellar
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The toolchain itself is pinned by stellar/rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: stellar
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  release-vault:
+    needs: test
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@6b16426dd3a61715ddddf83a2df322a6371fe071 # main, 2026-10-18
+    with:
+      release_name: ${{ github.ref_name }}
+      release_description: "Cross Mesh Ingress Stellar contracts — see stellar/README.md"
+      relative_path: stellar
+      package: vault
+      home_domain: crossmesh.xyz
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}
+
+  release-vault-factory:
+    needs: test
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@6b16426dd3a61715ddddf83a2df322a6371fe071 # main, 2026-10-18
+    with:
+      release_name: ${{ github.ref_name }}
+      release_description: "Cross Mesh Ingress Stellar contracts — see stellar/README.md"
+      relative_path: stellar
+      package: vault-factory
+      home_domain: crossmesh.xyz
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}
+
+  release-aquarius-filler:
+    needs: test
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@6b16426dd3a61715ddddf83a2df322a6371fe071 # main, 2026-10-18
+    with:
+      release_name: ${{ github.ref_name }}
+      release_description: "Cross Mesh Ingress Stellar contracts — see stellar/README.md"
+      relative_path: stellar
+      package: aquarius-filler
+      home_domain: crossmesh.xyz
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,21 @@
+[package]
+name = "vault"
+description = "Per-owner USDC→XLM delivery vault (Cross Mesh Ingress, Stellar side)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+crossmesh-interfaces = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+test-support = { workspace = true }
