@@ -1,8 +1,9 @@
 name: Stellar contracts release
 
-# Tag `stellar-v<version>` → reproducible wasm builds published as a GitHub release with SHA256 hashes
-# and build attestations (StellarExpert's workflow). Deploy mainnet contracts from these artifacts only:
-# StellarExpert validates a deployed contract's source by matching its wasm hash against a release.
+# Tag `stellar-v<version>` → reproducible wasm builds published as GitHub releases with build attestations
+# (StellarExpert's workflow; each wasm's SHA256 is in the job log and the attestation). Deploy mainnet
+# contracts from these artifacts only: StellarExpert validates a deployed contract's source by matching its
+# wasm hash against a release.
 on:
   push:
     tags:
@@ -14,12 +15,12 @@ permissions:
 jobs:
   test:
     name: fmt · clippy · test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: stellar
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The toolchain itself is pinned by stellar/rust-toolchain.toml.
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
