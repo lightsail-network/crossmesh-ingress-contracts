@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "aquarius-filler"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "crossmesh-interfaces",
  "soroban-sdk",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "crossmesh-interfaces"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "soroban-sdk",
 ]
@@ -1831,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "test-support"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "soroban-sdk",
 ]
@@ -1926,7 +1926,7 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
 name = "vault"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "crossmesh-interfaces",
  "soroban-sdk",
@@ -1935,7 +1935,7 @@ dependencies = [
 
 [[package]]
 name = "vault-factory"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "aquarius-filler",
  "crossmesh-interfaces",
