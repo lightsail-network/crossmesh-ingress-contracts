@@ -51,3 +51,5 @@ make fmt-check  # cargo fmt --all -- --check
 make lint       # cargo clippy --all-targets -- -D warnings
 make build      # stellar contract build → target/wasm32v1-none/release/*.wasm
 ```
+
+Deployment from a release: `uv run stellar/script/deploy.py --help` and `docs/DESIGN.md` §7.
