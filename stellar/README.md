@@ -1,13 +1,15 @@
 # Cross Mesh Ingress — Stellar side: XLM delivery
 
 A new Stellar account cannot receive anything until it holds XLM. This directory lets a USDC deposit on an
-EVM chain arrive on Stellar **as XLM**, creating the recipient's account if it does not exist yet. No key held
-by Cross Mesh or anyone else can divert a user's funds.
+EVM chain arrive on Stellar **as XLM**, creating the recipient's account if it does not exist yet. Funds can
+only go to the user: no key held by Cross Mesh or anyone else can send them anywhere else. The relayer that
+converts them chooses when and through which venue, but is bound by an oracle price floor; the exact worst
+case is in `docs/DESIGN.md` §6.
 
 The deposit address commits the user's **vault** — a tiny Soroban contract at an address derived from the
-user's own Stellar address — instead of the user's address. Circle's forwarder mints the USDC into the vault,
-a relayer-triggered, oracle-bounded swap turns it into XLM for the user, and the user can always take the
-USDC back instead.
+user's own Stellar address — instead of the user's address. Circle's forwarder mints the USDC into the vault
+and a relayer-triggered, oracle-bounded swap turns it into XLM for the user. Until that swap happens, the user
+can withdraw the USDC instead, once their account exists.
 
 ```mermaid
 flowchart TD
