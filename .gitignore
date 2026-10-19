@@ -5,3 +5,4 @@ internal/
 .idea/
 docs/*.pdf
 docs/slither-report.json
+.DS_Store

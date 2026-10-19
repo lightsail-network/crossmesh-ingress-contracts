@@ -1,0 +1,51 @@
+name: Stellar contracts
+
+on:
+  push:
+    branches: [main]
+    paths: ["stellar/**", ".github/workflows/stellar.yml"]
+  pull_request:
+    paths: ["stellar/**", ".github/workflows/stellar.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  stellar:
+    name: fmt · clippy · test · build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: stellar
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # The toolchain itself is pinned by stellar/rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: stellar
+
+      # Pinned by commit, so the action cannot infer the release from its ref: name the version explicitly.
+      - uses: stellar/stellar-cli@c0f4d0da891bbf214c08b8c5035ae6db80e9a3bd # v28.1.0
+        with:
+          version: 28.1.0
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build wasm
+        run: stellar contract build
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stellar-wasm
+          path: stellar/target/wasm32v1-none/release/*.wasm
+          if-no-files-found: error
