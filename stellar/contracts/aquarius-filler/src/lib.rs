@@ -168,10 +168,10 @@ impl AquariusFiller {
 
         // Trust balance deltas, not the router's return value: it must have taken exactly the input and
         // delivered at least the minimum.
-        if input_before.checked_sub(input.balance(&this)) != Some(amount_in) {
+        if input_before - input.balance(&this) != amount_in {
             panic_with_error!(&e, FillerError::InputNotTaken);
         }
-        let got = out.balance(&this).checked_sub(before).unwrap_or(0);
+        let got = out.balance(&this) - before;
         if got < min_out {
             panic_with_error!(&e, FillerError::Shortfall);
         }
