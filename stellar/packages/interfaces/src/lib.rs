@@ -5,9 +5,17 @@
 
 use soroban_sdk::{contractclient, contracttype, Address, Bytes, BytesN, Env, Symbol, Vec};
 
+/// The highest `discount_ppm` any factory or vault accepts: 100_000 ppm = 10 %. Fixed in code, so the worst
+/// case of a compromised relayer and admin is a property of the released wasm, not of a deployment.
+pub const DISCOUNT_CAP_PPM: u32 = 100_000;
+
+/// The highest `max_price_age` any factory or vault accepts, in seconds: three updates of a 5-minute feed.
+/// The configured value is chosen per feed below it.
+pub const MAX_PRICE_AGE_CAP: u64 = 900;
+
 /// Per-network configuration. Set in `VaultFactory::__constructor` and handed to every `Vault::swap`
 /// call by the factory. Everything is immutable except `discount_ppm`, which the factory admin may move
-/// within the immutable `discount_cap_ppm` (design §5.1). Any other change means a new factory and
+/// up to `DISCOUNT_CAP_PPM` (design §5.1). Any other change means a new factory and
 /// therefore new vault addresses.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,14 +33,11 @@ pub struct VaultConfig {
     /// How USDC is identified in that feed. Both prices are read on every swap so a USDC de-peg
     /// lowers the floor instead of freezing swaps (the feed's base is USD).
     pub usdc_asset: OracleAsset,
-    /// Immutable ceiling for `discount_ppm`, in millionths (1e6 = 100 %; 100_000 = 10 %), the same ppm
-    /// unit as the EVM `Config` fee fields (`feePpm`, `maxFeePpm`). This is the worst case a user can
-    /// verify. Must be < 1_000_000.
-    pub discount_cap_ppm: u32,
-    /// Current maximum discount of a fill against the oracle price, in millionths (10_000 = 1 %).
-    /// Admin-tunable in the factory within `discount_cap_ppm`; the factory passes the current value.
+    /// Current maximum discount of a fill against the oracle price, in millionths like the EVM `Config` fee
+    /// fields (10_000 = 1 %); at most `DISCOUNT_CAP_PPM`. Admin-tunable in the factory, which passes the
+    /// current value.
     pub discount_ppm: u32,
-    /// Maximum age of an oracle record, in seconds.
+    /// Maximum age of an oracle record, in seconds; at most `MAX_PRICE_AGE_CAP`.
     pub max_price_age: u64,
     /// Minimum XLM (stroops) a single `swap` must deliver. Set above the account minimum (1 XLM today, may
     /// change) so the new account can also pay fees and add a trustline: 2 XLM.

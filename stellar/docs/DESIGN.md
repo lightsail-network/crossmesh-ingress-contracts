@@ -102,12 +102,15 @@ pub struct VaultConfig {
     pub oracle: Address,            // Reflector Pulse feed (§5.4)
     pub xlm_asset: OracleAsset,     // how XLM is identified in that feed
     pub usdc_asset: OracleAsset,    // how USDC is identified in the same feed (both prices are read)
-    pub discount_cap_ppm: u32,      // immutable ceiling, millionths like the EVM Config's feePpm: 100_000 = 10 %
-    pub discount_ppm: u32,          // current bound, admin-tunable within the cap: 10_000 = 1 %
-    pub max_price_age: u64,         // seconds (§7)
+    pub discount_ppm: u32,          // millionths like the EVM Config's feePpm; admin-tunable, at most DISCOUNT_CAP_PPM
+    pub max_price_age: u64,         // seconds, at most MAX_PRICE_AGE_CAP (§7)
     pub min_delivery: i128,         // stroops of XLM (§7)
 }
 ```
+
+Two bounds are fixed in code rather than configured: `DISCOUNT_CAP_PPM` = 100_000 (10 %) and
+`MAX_PRICE_AGE_CAP` = 900 s. The factory refuses a configuration beyond them and the vault re-checks every
+configuration it receives, so they hold for every deployment of the released wasm.
 
 | Function | Who | What |
 |----------|-----|------|
@@ -119,10 +122,10 @@ pub struct VaultConfig {
 Why: `deploy` is permissionless because code and owner are fixed, so anyone may deploy a vault — which is
 all an owner needs in order to `withdraw` if Cross Mesh never does. Relayers are admin-managed so key
 rotation needs no new factory; a relayer can only trigger a `swap`, bounded by the discount (§6). The
-discount is tunable under an immutable cap because the right value follows the market; the cap is what users
-verify. There is no pause switch: disabling every relayer halts swaps, and nothing can halt `withdraw`. The
-vault does not check relayers itself — re-entry is forbidden, so `Vault.swap` accepts the factory alone and
-the factory is the single place where relayers are checked.
+discount is tunable because the right value follows the market; its cap is fixed in code, so it is the same
+for every deployment. There is no pause switch: disabling every relayer halts swaps, and nothing can halt
+`withdraw`. The vault does not check relayers itself — re-entry is forbidden, so `Vault.swap` accepts the
+factory alone and the factory is the single place where relayers are checked.
 
 ### 5.2 `Vault`
 
@@ -189,8 +192,8 @@ restored automatically by the next transaction that touches it.
 **Invariants.** I1: USDC leaves a vault only via `swap` (to the filler, within the invocation that must
 return XLM) or `withdraw` (to the owner). I2: XLM leaves a vault only to the owner. I3: a vault's code and
 owner are fixed, nothing is upgradable, and the address depends on nothing else. I4: every `swap` delivers
-at least `max(min_out, floor)`, the floor being a fresh oracle price minus at most
-`discount_ppm ≤ discount_cap_ppm`.
+at least `max(min_out, floor)`, the floor being an oracle price at most `max_price_age` old minus
+`discount_ppm`; the code caps these at 900 s and 10 %.
 
 | Party | Can | Cannot |
 |-------|-----|--------|
@@ -211,8 +214,8 @@ fresh user cannot act until the account exists; if Cross Mesh disappears, anyone
 with a couple of XLM and the user `withdraw`s — the same position new users are in with the USDC product.
 
 Compared with the EVM side, "no key can divert the principal" holds with one qualification: within the
-discount, the conversion rate is at the relayer's discretion. Users verify `discount_cap_ppm` and the oracle
-in the immutable factory config, as they verify fee caps in `Config` today.
+discount, the conversion rate is at the relayer's discretion. The 10 % cap comes with the code; users verify
+the oracle and the vault code hash in the immutable factory config, as they verify fee caps in `Config` today.
 
 **Where funds can get stuck.** A C owner that can neither call `withdraw` itself nor implement
 `__check_auth` depends on the relayer forever, and a C owner that cannot use XLM (a token or pool contract)
@@ -237,9 +240,8 @@ and with it every vault address: freeze both before tagging.
 | `vault_wasm_hash` | hash of the released `vault.wasm` |
 | `oracle` | Reflector CEX Pulse feed: mainnet `CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN`, testnet `CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63` |
 | `xlm_asset`, `usdc_asset` | `Other("XLM")`, `Other("USDC")` |
-| `discount_cap_ppm` | 100_000 (10 %) |
-| `discount_ppm` | ≈ 10_000 (1 %) |
-| `max_price_age` | 360 s: the Reflector feed publishes every 5 minutes, so this allows one update plus a minute of slack |
+| `discount_ppm` | ≈ 10_000 (1 %); the code accepts at most 100_000 (10 %) |
+| `max_price_age` | 360 s: the Reflector feed publishes every 5 minutes, so this allows one update plus a minute of slack; the code accepts at most 900 s |
 | `min_delivery` | 20_000_000 (2 XLM: reserve, one trustline and fees) |
 | Aquarius router (filler constructor) | mainnet `CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK`, testnet `CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD` |
 

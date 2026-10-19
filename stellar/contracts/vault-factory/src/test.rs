@@ -3,7 +3,7 @@ extern crate std;
 
 use super::*;
 use crossmesh_interfaces::AquariusHop;
-use crossmesh_interfaces::{OracleAsset, PriceData, VaultConfig};
+use crossmesh_interfaces::{OracleAsset, PriceData, VaultConfig, DISCOUNT_CAP_PPM, MAX_PRICE_AGE_CAP};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke, MuxedAddress as _};
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
@@ -99,8 +99,7 @@ fn build_config(env: &Env, usdc: &Address, xlm: &Address, oracle: &Address) -> V
         oracle: oracle.clone(),
         xlm_asset: OracleAsset::Other(symbol_short!("XLM")),
         usdc_asset: OracleAsset::Other(symbol_short!("USDC")),
-        discount_cap_ppm: 100_000, // 10 %
-        discount_ppm: 10_000,      // 1 %
+        discount_ppm: 10_000, // 1 %
         max_price_age: 360,
         min_delivery: 20_000_000, // 2 XLM
     }
@@ -194,20 +193,20 @@ fn constructor_stores_admin_and_config() {
 }
 
 #[test]
-#[should_panic]
-fn constructor_rejects_a_cap_of_100_percent() {
+#[should_panic(expected = "Error(Contract, #2)")] // InvalidConfig
+fn constructor_rejects_a_discount_above_the_cap() {
     let fx = fixture();
     let mut config = fx.config.clone();
-    config.discount_cap_ppm = 1_000_000;
+    config.discount_ppm = DISCOUNT_CAP_PPM + 1;
     fx.env.register(VaultFactory, (fx.admin.clone(), config));
 }
 
 #[test]
-#[should_panic]
-fn constructor_rejects_a_discount_above_the_cap() {
+#[should_panic(expected = "Error(Contract, #2)")] // InvalidConfig
+fn constructor_rejects_a_price_age_above_the_cap() {
     let fx = fixture();
     let mut config = fx.config.clone();
-    config.discount_ppm = config.discount_cap_ppm + 1;
+    config.max_price_age = MAX_PRICE_AGE_CAP + 1;
     fx.env.register(VaultFactory, (fx.admin.clone(), config));
 }
 
@@ -221,13 +220,13 @@ fn set_discount_is_admin_only_bounded_by_the_cap_and_used_by_the_next_swap() {
     token::StellarAssetClient::new(&fx.env, &fx.usdc).mint(&vault_id, &HUNDRED_USDC);
     let filler = fx.filler();
 
-    // Above the immutable cap: refused.
+    // Above the code-fixed cap: refused.
     assert_eq!(
-        client.try_set_discount(&(fx.config.discount_cap_ppm + 1)),
+        client.try_set_discount(&(DISCOUNT_CAP_PPM + 1)),
         contract_err(FactoryError::AboveCap as u32)
     );
     // At the cap: fine. 2 %: the floor for 100 USDC at $0.50 drops from 198 to 196 XLM.
-    client.set_discount(&fx.config.discount_cap_ppm);
+    client.set_discount(&DISCOUNT_CAP_PPM);
     client.set_discount(&20_000);
     let events = fx.env.events().all().filter_by_contract(&fx.factory);
     assert_eq!(
@@ -235,7 +234,6 @@ fn set_discount_is_admin_only_bounded_by_the_cap_and_used_by_the_next_swap() {
         std::vec![DiscountSet { discount_ppm: 20_000 }.to_xdr(&fx.env, &fx.factory)]
     );
     assert_eq!(client.config().discount_ppm, 20_000);
-    assert_eq!(client.config().discount_cap_ppm, fx.config.discount_cap_ppm);
     let out = client.swap(&fx.relayer, &owner, &Some(50 * ONE), &filler, &0, &fx.bytes(b""));
     assert_eq!(out, 50 * 196 * ONE / 100);
 

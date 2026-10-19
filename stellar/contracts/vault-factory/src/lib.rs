@@ -12,9 +12,9 @@
 //! factory (which the host would reject as re-entry).
 //!
 //! The factory has no upgrade path. Its only mutable state is the admin, the relayer set and the current
-//! `discount_ppm` (bounded by the immutable `discount_cap_ppm`); a relayer can only trigger `Vault::swap`,
-//! whose worst case is bounded by that discount against an oracle price at most `max_price_age` old, so
-//! neither role can reach the principal.
+//! `discount_ppm` (at most `DISCOUNT_CAP_PPM`, 10 %, fixed in code); a relayer can only trigger
+//! `Vault::swap`, whose worst case is bounded by that discount against an oracle price at most
+//! `max_price_age` old (itself at most `MAX_PRICE_AGE_CAP`), so neither role can reach the principal.
 //!
 //! Rent: neither the factory nor the vaults extend TTLs from inside a call (that would also extend the
 //! shared code entries and put an unpredictable rent bill on a random transaction). The operator keeps
@@ -25,14 +25,11 @@
 #[cfg(test)]
 mod test;
 
-use crossmesh_interfaces::{VaultClient, VaultConfig};
+use crossmesh_interfaces::{VaultClient, VaultConfig, DISCOUNT_CAP_PPM, MAX_PRICE_AGE_CAP};
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, token, Address, Bytes,
     BytesN, ContractExecutable, Env, MuxedAddress,
 };
-
-/// Parts per million: the fee/discount unit shared with the EVM `Config` (1e6 = 100 %).
-pub const PPM: u32 = 1_000_000;
 
 #[contracttype]
 #[derive(Clone)]
@@ -53,7 +50,7 @@ pub enum FactoryError {
     NotRelayer = 1,
     /// Constructor received an unusable configuration.
     InvalidConfig = 2,
-    /// `set_discount` above the immutable `discount_cap_ppm`.
+    /// `set_discount` above `DISCOUNT_CAP_PPM`.
     AboveCap = 3,
 }
 
@@ -98,12 +95,13 @@ impl VaultFactory {
     /// * `admin` – may add/remove relayers, move `discount_ppm` within the cap, and hand over the admin
     ///   role; nothing else.
     /// * `config` – immutable from here on except `discount_ppm` (see [`VaultFactory::set_discount`]).
-    ///   `vault_wasm_hash` must already be uploaded.
+    ///   `vault_wasm_hash` must already be uploaded; `discount_ppm` and `max_price_age` must be within the
+    ///   code-fixed caps (`InvalidConfig`).
     pub fn __constructor(e: Env, admin: Address, config: VaultConfig) {
-        if config.discount_cap_ppm >= PPM
-            || config.discount_ppm > config.discount_cap_ppm
-            || config.min_delivery <= 0
+        if config.discount_ppm > DISCOUNT_CAP_PPM
             || config.max_price_age == 0
+            || config.max_price_age > MAX_PRICE_AGE_CAP
+            || config.min_delivery <= 0
             || config.usdc == config.xlm
             || config.oracle == config.usdc
             || config.oracle == config.xlm
@@ -192,13 +190,12 @@ impl VaultFactory {
     }
 
     /// Set the current maximum discount against the oracle price, in ppm. Admin-only; must not exceed
-    /// the immutable `discount_cap_ppm`, which is the worst case users can verify. Takes effect on the
-    /// next `swap` (the factory passes the current value to the vault). Too tight only makes
-    /// swaps fail and retry; too loose is bounded by the cap.
+    /// `DISCOUNT_CAP_PPM` (10 %, fixed in code). Takes effect on the next `swap` (the factory passes the
+    /// current value to the vault). Too tight only makes swaps fail and retry; too loose is bounded by
+    /// the cap.
     pub fn set_discount(e: Env, discount_ppm: u32) {
         read_admin(&e).require_auth();
-        let stored: VaultConfig = e.storage().instance().get(&DataKey::Config).unwrap();
-        if discount_ppm > stored.discount_cap_ppm {
+        if discount_ppm > DISCOUNT_CAP_PPM {
             panic_with_error!(&e, FactoryError::AboveCap);
         }
         e.storage().instance().set(&DataKey::Discount, &discount_ppm);

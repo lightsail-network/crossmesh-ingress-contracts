@@ -27,7 +27,9 @@
 #[cfg(test)]
 mod test;
 
-use crossmesh_interfaces::{FillerClient, OracleAsset, PriceData, ReflectorClient, VaultConfig};
+use crossmesh_interfaces::{
+    FillerClient, OracleAsset, PriceData, ReflectorClient, VaultConfig, DISCOUNT_CAP_PPM, MAX_PRICE_AGE_CAP,
+};
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, panic_with_error, token, Address, Bytes, BytesN, Env,
     MuxedAddress,
@@ -60,9 +62,9 @@ pub enum VaultError {
     NothingToWithdraw = 8,
     /// Arithmetic overflow in the floor computation.
     Overflow = 9,
-    /// Unusable configuration: discount above its cap or cap ≥ 100 %, non-positive `min_delivery`, zero
-    /// `max_price_age`, or USDC and XLM being the same contract (defense in depth; the factory enforces
-    /// the same at construction).
+    /// Unusable configuration: discount above `DISCOUNT_CAP_PPM`, `max_price_age` zero or above
+    /// `MAX_PRICE_AGE_CAP`, non-positive `min_delivery`, or USDC and XLM being the same contract (the factory
+    /// enforces the same at construction).
     InvalidConfig = 10,
 }
 
@@ -236,18 +238,19 @@ fn require_this_vault(e: &Env, owner: &Bytes, factory: &Address) -> MuxedAddress
 /// decimals cancel, and both tokens have 7 decimals, so no scaling is needed. Reading USDC rather than
 /// assuming it is worth exactly one base unit means a de-peg lowers the floor instead of freezing swaps.
 fn oracle_floor(e: &Env, config: &VaultConfig, amount: i128) -> Floor {
-    let oracle = ReflectorClient::new(e, &config.oracle);
-    let now = e.ledger().timestamp();
-    let xlm = fresh_price(e, &oracle, &config.xlm_asset, now, config.max_price_age);
-    let usdc = fresh_price(e, &oracle, &config.usdc_asset, now, config.max_price_age);
-    if config.discount_ppm > config.discount_cap_ppm
-        || i128::from(config.discount_cap_ppm) >= PPM
-        || config.min_delivery <= 0
+    // The code-fixed bounds hold whatever configuration the factory passes.
+    if config.discount_ppm > DISCOUNT_CAP_PPM
         || config.max_price_age == 0
+        || config.max_price_age > MAX_PRICE_AGE_CAP
+        || config.min_delivery <= 0
         || config.usdc == config.xlm
     {
         panic_with_error!(e, VaultError::InvalidConfig);
     }
+    let oracle = ReflectorClient::new(e, &config.oracle);
+    let now = e.ledger().timestamp();
+    let xlm = fresh_price(e, &oracle, &config.xlm_asset, now, config.max_price_age);
+    let usdc = fresh_price(e, &oracle, &config.usdc_asset, now, config.max_price_age);
     let keep = PPM - i128::from(config.discount_ppm);
     let overflow = || panic_with_error!(e, VaultError::Overflow);
     let numerator = amount

@@ -3,7 +3,7 @@
 extern crate std;
 
 use super::*;
-use crossmesh_interfaces::{OracleAsset, PriceData, VaultConfig};
+use crossmesh_interfaces::{OracleAsset, PriceData, VaultConfig, DISCOUNT_CAP_PPM, MAX_PRICE_AGE_CAP};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _, MuxedAddress as _, StellarAssetContract};
 use soroban_sdk::xdr::{ScErrorCode, ScErrorType};
 use soroban_sdk::{
@@ -220,8 +220,7 @@ fn fixture() -> Fx {
         oracle: oracle.clone(),
         xlm_asset: xlm_asset(),
         usdc_asset: usdc_asset(),
-        discount_cap_ppm: 100_000, // 10 %
-        discount_ppm: 10_000,      // 1 %
+        discount_ppm: 10_000, // 1 %
         max_price_age: 360,
         min_delivery: 20_000_000, // 2 XLM
     };
@@ -672,7 +671,7 @@ fn swap_rejects_a_config_whose_discount_exceeds_its_cap() {
     fx.fund_usdc(&vault_id, HUNDRED_USDC);
     let filler = fx.filler(FillMode::PayWant);
     let mut config = fx.config.clone();
-    config.discount_ppm = config.discount_cap_ppm + 1;
+    config.discount_ppm = DISCOUNT_CAP_PPM + 1;
 
     let r = fx.try_swap_cfg(&vault_id, &owner, &filler, HUNDRED_USDC, 0, &config);
 
@@ -805,8 +804,7 @@ fn swap_rejects_an_unusable_config() {
         invalid
     );
     let mut c = fx.config.clone();
-    c.discount_cap_ppm = 1_000_000;
-    c.discount_ppm = 1_000_000;
+    c.max_price_age = MAX_PRICE_AGE_CAP + 1;
     assert_eq!(
         fx.try_swap_cfg(&vault_id, &owner, &filler, HUNDRED_USDC, 0, &c),
         invalid
