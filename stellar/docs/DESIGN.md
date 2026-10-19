@@ -227,8 +227,17 @@ the next deposit or the owner's `withdraw`; the relayer should swap whole balanc
 
 ## 7. Deployment
 
-Per network: upload `vault.wasm` → deploy `VaultFactory(admin, config)` → `set_relayer` → deploy
-`AquariusFiller(router, vault_wasm_hash)`. Vaults are deployed lazily by the first swap. Deploy only wasm
+Per network: upload the three codes → deploy `VaultFactory(admin, config)` → `set_relayer` → deploy
+`AquariusFiller(router, vault_wasm_hash)`. Vaults are deployed lazily by the first swap. `stellar/script/deploy.py`
+does this from a release, signing with a secret key, a seed phrase or a Ledger, in two steps:
+
+```sh
+uv run stellar/script/deploy.py upload --network <testnet|mainnet> --tag <tag> --signer <key|mnemonic|ledger>
+uv run stellar/script/deploy.py deploy --network <testnet|mainnet> --tag <tag> --signer <key|mnemonic|ledger> --relayer G…
+```
+
+It verifies the release's build attestations, skips whatever is already on chain, and ends by reading back every
+code hash and configuration value; `verify --deployer G…` repeats that check with no key at all. Deploy only wasm
 from a GitHub release: a `stellar-v<version>` tag runs `.github/workflows/stellar-release.yml`, StellarExpert's
 reproducible build with attestation, which is what StellarExpert validates deployed contracts against. The
 wasm embeds the doc comments of `vault` and `crossmesh-interfaces`, so editing them changes `vault_wasm_hash`
