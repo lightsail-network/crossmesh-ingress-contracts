@@ -28,7 +28,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test (incl. live computeAddress on the deployed mainnet and testnet factories)
+      - name: Test (incl. live computeAddress and vault_address on the deployed factories)
         env:
           # Override with private RPC secrets for reliability; defaults to public endpoints.
           ETHEREUM_RPC: ${{ secrets.ETHEREUM_RPC || 'https://ethereum-rpc.publicnode.com' }}
@@ -36,6 +36,9 @@ jobs:
           BASE_RPC: ${{ secrets.BASE_RPC || 'https://base-rpc.publicnode.com' }}
           SEPOLIA_RPC: ${{ secrets.SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com' }}
           AMOY_RPC: ${{ secrets.AMOY_RPC || 'https://polygon-amoy-bor-rpc.publicnode.com' }}
+          STELLAR_TESTNET_RPC: ${{ secrets.STELLAR_TESTNET_RPC || 'https://soroban-testnet.stellar.org' }}
+          # No public default: its suite runs once the secret is set and mainnet has a VaultFactory.
+          STELLAR_MAINNET_RPC: ${{ secrets.STELLAR_MAINNET_RPC }}
         run: npm test
 
       - name: Build

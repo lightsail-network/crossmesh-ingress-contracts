@@ -1,9 +1,10 @@
-export { computeDepositAddress, verifyDepositAddress, type DepositAddressParams } from "./address.js";
-export { DEPLOYMENTS, RESERVED_CONTRACTS, type Deployment, type Network } from "./deployments.js";
 export {
-  InvalidRecipientError,
-  validateRecipient,
-  type InvalidRecipientReason,
-  type RecipientType,
-  type RecipientValidation,
-} from "./strkey.js";
+  computeDepositAddress,
+  verifyDepositAddress,
+  type DeliveryAsset,
+  type DepositAddressParams,
+  type TransferSpeed,
+} from "./address.js";
+export { CONTRACTS, type Contracts, type Network } from "./contracts.js";
+export { InvalidRecipientError, isValidRecipient } from "./recipient.js";
+export { computeVaultAddress, type VaultAddressParams } from "./vault.js";
