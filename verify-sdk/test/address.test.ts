@@ -10,14 +10,8 @@ import {
 } from "viem";
 import { describe, expect, it } from "vitest";
 import { deriveAddress } from "../src/address.js";
-import {
-  DEPLOYMENTS,
-  InvalidRecipientError,
-  RESERVED_CONTRACTS,
-  computeDepositAddress,
-  verifyDepositAddress,
-} from "../src/index.js";
-import { randomIndex, randomRecipient } from "./helpers.js";
+import { CONTRACTS, InvalidRecipientError, computeDepositAddress, verifyDepositAddress } from "../src/index.js";
+import { randomAccount, randomIndex, randomRecipient } from "./helpers.js";
 
 const ascii = (text: string) => Uint8Array.from(text, (char) => char.charCodeAt(0));
 
@@ -35,9 +29,9 @@ function viemAddress(factory: Address, implementation: Address, recipient: strin
 
 describe("deriveAddress", () => {
   // test/CwiaVector.t.sol — checked there against OZ Clones.predictDeterministicAddressWithImmutableArgs
-  const VECTOR_DEPLOYMENT = {
+  const VECTOR_CONTRACTS = {
     factory: "0x0E37Ba881cD1D6fAe4E26BC1a7C0D44A6Fbc028C",
-    implementation: "0x0c7DEaE2DF6b9dC3993c11b62e6BDD6A308CA80e",
+    forwarderImplementation: "0x0c7DEaE2DF6b9dC3993c11b62e6BDD6A308CA80e",
   } as const;
   const VECTOR_ACCOUNT = "GBUKBCG5VLRKAVYAIREJRUJHOKLIADZJOICRW43WVJCLES52BDOTCQZU";
   const VECTOR_CONTRACT = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXG7WP3GVQ4MV23U6AKOJVPJ4"; // bad checksum: not a valid strkey, still a derivation vector
@@ -53,97 +47,162 @@ describe("deriveAddress", () => {
   ];
 
   it.each(vectors)("matches the Solidity vector %s/%s/%s", (recipient, index, fast, expected) => {
-    expect(deriveAddress(VECTOR_DEPLOYMENT, ascii(recipient), index, fast)).toBe(expected);
+    expect(deriveAddress(VECTOR_CONTRACTS, ascii(recipient), index, fast)).toBe(expected);
   });
 
   it("matches the viem oracle on random inputs, EIP-55 included", () => {
+    const contracts = CONTRACTS.testnet;
     for (let i = 0; i < 1000; i++) {
       const recipient = randomRecipient();
       const index = randomIndex();
       const fast = Math.random() < 0.5;
-      const deployment = DEPLOYMENTS.testnet!;
-      const derived = deriveAddress(deployment, ascii(recipient), index, fast);
-      expect(derived).toBe(viemAddress(deployment.factory, deployment.implementation, recipient, index, fast));
+      const derived = deriveAddress(contracts, ascii(recipient), index, fast);
+      expect(derived).toBe(viemAddress(contracts.factory, contracts.forwarderImplementation, recipient, index, fast));
       expect(derived).toBe(getAddress(derived));
     }
   });
 });
 
 describe("computeDepositAddress", () => {
+  const recipient = "GBCQATHVGEMQWIP3HANAMXICFDZRABAIJTGKLLJ2FX4L7VH6AXVDV5KK";
+  const params = { recipient, deliveryAsset: "USDC", speed: "standard", index: 0, network: "testnet" } as const;
+
   it("reproduces the live testnet clone (Sepolia + Polygon Amoy)", () => {
-    const recipient = "GBCQATHVGEMQWIP3HANAMXICFDZRABAIJTGKLLJ2FX4L7VH6AXVDV5KK";
-    expect(computeDepositAddress({ recipient, index: 0, network: "testnet" })).toBe("0xDB35Ea4999BD7CFe838Fd71902Ad5F685460b963");
+    expect(computeDepositAddress(params)).toBe("0xDB35Ea4999BD7CFe838Fd71902Ad5F685460b963");
   });
 
-  it("defaults to standard; fast and standard differ", () => {
-    const recipient = randomRecipient();
-    const std = computeDepositAddress({ recipient, index: 3, network: "testnet" });
-    expect(computeDepositAddress({ recipient, index: 3, fast: false, network: "testnet" })).toBe(std);
-    expect(computeDepositAddress({ recipient, index: 3, fast: true, network: "testnet" })).not.toBe(std);
+  // The API reference's test vectors (crossmesh-ingress src/api/docs.ts), locked there against each network's
+  // on-chain factory.computeAddress.
+  it.each([
+    ["mainnet", "standard", "0x0CDf8087a6F9709B85F87Cd6893c082AA89bA3d0"],
+    ["mainnet", "fast", "0x4f6851dCB766872f60cF1Cf11851AaAe8d4B894a"],
+    ["testnet", "standard", "0x93845A25A3a5F9b15c25532797CE56fD4851Fcce"],
+    ["testnet", "fast", "0x36b10Bac9dfb4C10947dCd49cB480594F0a1124B"],
+  ] as const)("matches the API reference's %s vector at %s speed", (network, speed, expected) => {
+    const vector = { recipient: "GBRAD6AQVETCVZDBT3TLU3KXGPQIXOIQX5DLJYKHNZ4ZF6AWYQXEZGQD", deliveryAsset: "USDC", speed, index: 0, network } as const;
+    expect(computeDepositAddress(vector)).toBe(expected);
   });
 
-  it("rejects a non-boolean fast", () => {
-    const recipient = randomRecipient();
-    for (const fast of ["false", "true", 0, 1, null]) {
-      expect(() => computeDepositAddress({ recipient, index: 0, fast: fast as unknown as boolean, network: "testnet" })).toThrow(TypeError);
-    }
+  it("derives a different address at each speed", () => {
+    const random = { ...params, recipient: randomRecipient(), index: 3 };
+    expect(computeDepositAddress({ ...random, speed: "fast" })).not.toBe(computeDepositAddress({ ...random, speed: "standard" }));
   });
 
   it("accepts number and bigint indices alike", () => {
-    const recipient = randomRecipient();
-    expect(computeDepositAddress({ recipient, index: 42, network: "testnet" })).toBe(
-      computeDepositAddress({ recipient, index: 42n, network: "testnet" }),
-    );
-    expect(() => computeDepositAddress({ recipient, index: (1n << 256n) - 1n, network: "testnet" })).not.toThrow();
+    expect(computeDepositAddress({ ...params, index: 42 })).toBe(computeDepositAddress({ ...params, index: 42n }));
+    expect(() => computeDepositAddress({ ...params, index: (1n << 256n) - 1n })).not.toThrow();
   });
 
-  it("rejects out-of-range indices", () => {
-    const recipient = randomRecipient();
+  it("accepts any valid recipient, Circle's CctpForwarder and USDC contract included", () => {
+    const circle = [
+      "CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T", // mainnet CctpForwarder
+      "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", // mainnet USDC
+      "CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ", // testnet CctpForwarder
+      "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA", // testnet USDC
+    ];
+    for (const id of circle) {
+      for (const network of ["mainnet", "testnet"] as const) {
+        expect(computeDepositAddress({ ...params, recipient: id, network })).toMatch(/^0x[0-9a-fA-F]{40}$/);
+      }
+    }
+  });
+
+  it("throws InvalidRecipientError for an invalid recipient", () => {
+    for (const bad of ["GBCQATHVGEMQWIP3HANAMXICFDZRABAIJTGKLLJ2FX4L7VH6AXVDV5KA", "gbcq", "", 42, undefined]) {
+      expect(() => computeDepositAddress({ ...params, recipient: bad as string }), String(bad)).toThrow(InvalidRecipientError);
+    }
+  });
+
+  it("throws TypeError for params, a network, a delivery asset or a speed it does not know", () => {
+    for (const bad of [undefined, null, recipient, 0]) {
+      expect(() => computeDepositAddress(bad as never), String(bad)).toThrow(TypeError);
+    }
+    for (const network of ["Mainnet", "devnet", "", "toString", "constructor", undefined, null, 1]) {
+      expect(() => computeDepositAddress({ ...params, network: network as never }), String(network)).toThrow(TypeError);
+    }
+    for (const deliveryAsset of ["usdc", "xlm", "EURC", "", undefined, null]) {
+      expect(() => computeDepositAddress({ ...params, deliveryAsset: deliveryAsset as never }), String(deliveryAsset)).toThrow(TypeError);
+    }
+    // A missing speed or a look-alike must not select an address.
+    for (const speed of [undefined, "FAST", "Standard", "true", true, false, 1, 0, null]) {
+      expect(() => computeDepositAddress({ ...params, speed: speed as never }), String(speed)).toThrow(TypeError);
+    }
+  });
+
+  it("throws RangeError for an index out of range, TypeError for one that is not a number", () => {
     for (const index of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1, -1n, 1n << 256n]) {
-      expect(() => computeDepositAddress({ recipient, index, network: "testnet" })).toThrow(RangeError);
+      expect(() => computeDepositAddress({ ...params, index }), String(index)).toThrow(RangeError);
+    }
+    for (const index of ["0", undefined, null]) {
+      expect(() => computeDepositAddress({ ...params, index: index as never }), String(index)).toThrow(TypeError);
     }
   });
 
-  it("refuses an invalid recipient", () => {
-    for (const recipient of ["GBCQATHVGEMQWIP3HANAMXICFDZRABAIJTGKLLJ2FX4L7VH6AXVDV5KA", "gbcq", RESERVED_CONTRACTS.testnet[0]!]) {
-      expect(() => computeDepositAddress({ recipient, index: 0, network: "testnet" })).toThrow(InvalidRecipientError);
-    }
-  });
-
-  it("deployment constants are frozen", () => {
+  it("contract constants are frozen", () => {
     expect(() => {
-      (DEPLOYMENTS.testnet as { factory: string }).factory = "0x0000000000000000000000000000000000000000";
+      (CONTRACTS.testnet as { factory: string }).factory = "0x0000000000000000000000000000000000000000";
     }).toThrow(TypeError);
     expect(() => {
-      (DEPLOYMENTS as Record<string, unknown>).testnet = null;
-    }).toThrow(TypeError);
-    expect(() => {
-      (RESERVED_CONTRACTS.mainnet as string[]).pop();
+      (CONTRACTS as Record<string, unknown>).testnet = null;
     }).toThrow(TypeError);
   });
 });
 
 describe("verifyDepositAddress", () => {
-  const recipient = "GBCQATHVGEMQWIP3HANAMXICFDZRABAIJTGKLLJ2FX4L7VH6AXVDV5KK";
-  const depositAddress = "0xDB35Ea4999BD7CFe838Fd71902Ad5F685460b963";
+  const params = {
+    depositAddress: "0xDB35Ea4999BD7CFe838Fd71902Ad5F685460b963",
+    recipient: "GBCQATHVGEMQWIP3HANAMXICFDZRABAIJTGKLLJ2FX4L7VH6AXVDV5KK",
+    deliveryAsset: "USDC",
+    speed: "standard",
+    index: 0,
+    network: "testnet",
+  } as const;
 
   it("accepts the right address in any case", () => {
-    for (const candidate of [depositAddress, depositAddress.toLowerCase(), "0x" + depositAddress.slice(2).toUpperCase()]) {
-      expect(verifyDepositAddress({ depositAddress: candidate, recipient, index: 0, network: "testnet" })).toBe(true);
+    const hex = params.depositAddress.slice(2);
+    for (const depositAddress of [params.depositAddress, `0x${hex.toLowerCase()}`, `0x${hex.toUpperCase()}`]) {
+      expect(verifyDepositAddress({ ...params, depositAddress })).toBe(true);
     }
   });
 
-  it("rejects a mismatch in index, mode or address", () => {
-    expect(verifyDepositAddress({ depositAddress, recipient, index: 1, network: "testnet" })).toBe(false);
-    expect(verifyDepositAddress({ depositAddress, recipient, index: 0, fast: true, network: "testnet" })).toBe(false);
-    for (const candidate of ["0xDB35Ea4999BD7CFe838Fd71902Ad5F685460b964", "DB35Ea4999BD7CFe838Fd71902Ad5F685460b963", depositAddress + "00", ""]) {
-      expect(verifyDepositAddress({ depositAddress: candidate, recipient, index: 0, network: "testnet" })).toBe(false);
+  it("rejects a mismatch in recipient, delivery asset, speed, index, network or address", () => {
+    expect(verifyDepositAddress({ ...params, recipient: randomAccount() })).toBe(false);
+    expect(verifyDepositAddress({ ...params, deliveryAsset: "XLM" })).toBe(false);
+    expect(verifyDepositAddress({ ...params, speed: "fast" })).toBe(false);
+    expect(verifyDepositAddress({ ...params, index: 1 })).toBe(false);
+    expect(verifyDepositAddress({ ...params, network: "mainnet" })).toBe(false);
+    for (const depositAddress of ["0xDB35Ea4999BD7CFe838Fd71902Ad5F685460b964", "DB35Ea4999BD7CFe838Fd71902Ad5F685460b963", `${params.depositAddress}00`, ""]) {
+      expect(verifyDepositAddress({ ...params, depositAddress }), depositAddress).toBe(false);
     }
   });
 
-  it("throws on an invalid recipient rather than answering", () => {
-    expect(() => verifyDepositAddress({ depositAddress, recipient: recipient.slice(1), index: 0, network: "testnet" })).toThrow(
-      InvalidRecipientError,
-    );
+  it("an address bound to another recipient verifies only against that recipient", () => {
+    const other = randomAccount();
+    const depositAddress = computeDepositAddress({ ...params, recipient: other });
+    expect(verifyDepositAddress({ ...params, recipient: other, depositAddress })).toBe(true);
+    expect(verifyDepositAddress({ ...params, depositAddress })).toBe(false);
+  });
+
+  it("never throws", () => {
+    const junk: unknown[] = [
+      undefined,
+      null,
+      0,
+      "",
+      {},
+      [],
+      { ...params, depositAddress: 1 },
+      { ...params, recipient: "G" },
+      { ...params, deliveryAsset: "EURC" },
+      { ...params, speed: "FAST" },
+      { ...params, speed: undefined },
+      { ...params, index: -1 },
+      { ...params, network: "devnet" },
+      { ...params, deliveryAsset: "XLM", network: "mainnet" },
+    ];
+    for (const input of junk) {
+      expect(() => verifyDepositAddress(input as never)).not.toThrow();
+      expect(verifyDepositAddress(input as never)).toBe(false);
+    }
   });
 });
