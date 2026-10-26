@@ -19,3 +19,5 @@ crossmesh-interfaces = { workspace = true }
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 test-support = { workspace = true }
+# Real ed25519 signatures for the owner-authorization tests (already in the SDK's testutils dependency tree).
+ed25519-dalek = "2.2.0"

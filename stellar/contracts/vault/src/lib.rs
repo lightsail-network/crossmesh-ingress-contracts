@@ -71,6 +71,8 @@ pub enum VaultError {
 /// Emitted by [`Vault::swap`]. `owner` (topic) is the owner's base address; `owner_strkey` carries
 /// the muxed form when the owner is an M address. `amount_out` is what the filler delivered in this
 /// swap; `paid_out` is everything forwarded to the owner (it also includes any XLM the vault held before).
+/// `xlm_price`, `usdc_price` and `discount_ppm` are the inputs of `floor`, so the event alone lets anyone
+/// recompute it (`floor = amount_in × usdc_price × (PPM − discount_ppm) / (xlm_price × PPM)`).
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Swapped {
@@ -86,6 +88,7 @@ pub struct Swapped {
     pub want: i128,
     pub xlm_price: i128,
     pub usdc_price: i128,
+    pub discount_ppm: u32,
 }
 
 /// Emitted by [`Vault::withdraw`].
@@ -188,6 +191,7 @@ impl Vault {
             want,
             xlm_price,
             usdc_price,
+            discount_ppm: config.discount_ppm,
         }
         .publish(&e);
         delta

@@ -1929,6 +1929,7 @@ name = "vault"
 version = "0.1.0-rc.1"
 dependencies = [
  "crossmesh-interfaces",
+ "ed25519-dalek",
  "soroban-sdk",
  "test-support",
 ]
