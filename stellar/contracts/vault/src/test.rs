@@ -4,11 +4,19 @@ extern crate std;
 
 use super::*;
 use crossmesh_interfaces::{OracleAsset, PriceData, VaultConfig, DISCOUNT_CAP_PPM, MAX_PRICE_AGE_CAP};
+use ed25519_dalek::{Signer, SigningKey};
+use soroban_sdk::auth::{Context, CustomAccountInterface};
+use soroban_sdk::crypto::Hash;
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _, MuxedAddress as _, StellarAssetContract};
-use soroban_sdk::xdr::{ScErrorCode, ScErrorType};
+use soroban_sdk::xdr::{
+    AccountId, HashIdPreimage, HashIdPreimageSorobanAuthorization, InvokeContractArgs, Limits, PublicKey, ScAddress,
+    ScBytes, ScErrorCode, ScErrorType, ScMap, ScMapEntry, ScSymbol, ScVal, ScVec, SorobanAddressCredentials,
+    SorobanAuthorizationEntry, SorobanAuthorizedFunction, SorobanAuthorizedInvocation, SorobanCredentials, StringM,
+    Uint256, VecM, WriteXdr,
+};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Bytes, BytesN, ContractExecutable, Env, Event,
-    MuxedAddress,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Bytes, BytesN,
+    ContractExecutable, Env, Event, MuxedAddress, Symbol, TryFromVal, Vec,
 };
 use test_support::{account_exists, contract_exists, create_account, create_trustline, native_sac, BASE_RESERVE};
 
@@ -149,12 +157,82 @@ impl MockFiller {
     }
 }
 
+/// A contract owner that calls `withdraw` itself: as the direct invoker it needs no authorization entry.
+#[contract]
+pub struct InvokingOwner;
+
+#[contractimpl]
+impl InvokingOwner {
+    pub fn pull(e: Env, vault: Address, owner: Bytes, factory: Address, token: Address) -> i128 {
+        crate::VaultClient::new(&e, &vault).withdraw(&owner, &factory, &token)
+    }
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum OwnerError {
+    Rejected = 1,
+}
+
+/// A custom-account owner: the host calls its `__check_auth` for the vault's `require_auth`. The
+/// "signature" is a bool saying whether to approve; it records the calls it was asked to approve.
+#[contract]
+pub struct CheckAuthOwner;
+
+#[contractimpl]
+impl CustomAccountInterface for CheckAuthOwner {
+    type Signature = bool;
+    type Error = OwnerError;
+
+    fn __check_auth(
+        e: Env,
+        _signature_payload: Hash<32>,
+        approve: bool,
+        auth_contexts: Vec<Context>,
+    ) -> Result<(), OwnerError> {
+        let mut seen: Vec<(Address, Symbol)> = Vec::new(&e);
+        for ctx in auth_contexts.iter() {
+            if let Context::Contract(c) = ctx {
+                seen.push_back((c.contract, c.fn_name));
+            }
+        }
+        e.storage().instance().set(&symbol_short!("seen"), &seen);
+        if approve {
+            Ok(())
+        } else {
+            Err(OwnerError::Rejected)
+        }
+    }
+}
+
 /// A `try_*` client result for a contract function that panicked with contract error `code`.
 fn contract_err<T, C>(code: u32) -> Result<Result<T, C>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>> {
     Err(Ok(soroban_sdk::Error::from_contract_error(code)))
 }
 
 type TryResult = Result<Result<i128, soroban_sdk::Error>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>;
+
+/// The signature a classic account presents: `Vec<AccountEd25519Signature { public_key, signature }>`.
+fn account_signature(key: &SigningKey, payload: [u8; 32]) -> ScVal {
+    let sym = |s: &str| ScVal::Symbol(ScSymbol(StringM::try_from(s).unwrap()));
+    let bytes = |b: &[u8]| ScVal::Bytes(ScBytes(b.to_vec().try_into().unwrap()));
+    let entry = ScVal::Map(Some(ScMap(
+        std::vec![
+            ScMapEntry {
+                key: sym("public_key"),
+                val: bytes(&key.verifying_key().to_bytes()),
+            },
+            ScMapEntry {
+                key: sym("signature"),
+                val: bytes(&key.sign(&payload).to_bytes()),
+            },
+        ]
+        .try_into()
+        .unwrap(),
+    )));
+    ScVal::Vec(Some(ScVec(std::vec![entry].try_into().unwrap())))
+}
 
 // ---------------------------------------------------------------------------------------------
 // Fixture
@@ -363,6 +441,71 @@ impl Fx {
         self.vault_client(vault).try_withdraw(owner, &self.factory, token)
     }
 
+    /// The G address of an ed25519 key, with an existing account and a USDC trustline.
+    fn account_for(&self, key: &SigningKey) -> Address {
+        let pk = Uint256(key.verifying_key().to_bytes());
+        let sc = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(pk)));
+        let a = Address::try_from_val(&self.env, &sc).unwrap();
+        create_account(&self.env, &a, 10 * ONE as i64);
+        create_trustline(&self.env, &a, &self.usdc_sac);
+        a
+    }
+
+    /// The authorized invocation `vault.withdraw(owner, factory, token)` as the host will see it.
+    fn withdraw_invocation(&self, vault: &Address, owner: &Bytes, token: &Address) -> SorobanAuthorizedInvocation {
+        SorobanAuthorizedInvocation {
+            function: SorobanAuthorizedFunction::ContractFn(InvokeContractArgs {
+                contract_address: ScAddress::from(vault.clone()),
+                function_name: StringM::try_from("withdraw").unwrap().into(),
+                args: std::vec![
+                    ScVal::try_from_val(&self.env, &owner.to_val()).unwrap(),
+                    ScVal::Address(ScAddress::from(self.factory.clone())),
+                    ScVal::Address(ScAddress::from(token.clone())),
+                ]
+                .try_into()
+                .unwrap(),
+            }),
+            sub_invocations: VecM::default(),
+        }
+    }
+
+    /// What `credential` must sign for `invocation`: the hash of the protocol's authorization preimage.
+    fn auth_payload(&self, invocation: &SorobanAuthorizedInvocation, nonce: i64, expiry: u32) -> [u8; 32] {
+        let preimage = HashIdPreimage::SorobanAuthorization(HashIdPreimageSorobanAuthorization {
+            network_id: self.env.ledger().network_id().to_array().into(),
+            nonce,
+            signature_expiration_ledger: expiry,
+            invocation: invocation.clone(),
+        });
+        let xdr = preimage.to_xdr(Limits::none()).unwrap();
+        self.env.crypto().sha256(&Bytes::from_slice(&self.env, &xdr)).to_array()
+    }
+
+    /// A real authorization entry for `withdraw` by `credential` (the owner's base address for an M owner,
+    /// the contract for a C owner), with the signature produced by `sign` over the host's payload.
+    fn withdraw_auth(
+        &self,
+        vault: &Address,
+        owner: &Bytes,
+        token: &Address,
+        credential: &Address,
+        nonce: i64,
+        sign: impl FnOnce([u8; 32]) -> ScVal,
+    ) -> SorobanAuthorizationEntry {
+        let expiry = self.env.ledger().sequence() + 100;
+        let invocation = self.withdraw_invocation(vault, owner, token);
+        let signature = sign(self.auth_payload(&invocation, nonce, expiry));
+        SorobanAuthorizationEntry {
+            credentials: SorobanCredentials::Address(SorobanAddressCredentials {
+                address: ScAddress::from(credential.clone()),
+                nonce,
+                signature_expiration_ledger: expiry,
+                signature,
+            }),
+            root_invocation: invocation,
+        }
+    }
+
     /// Nothing moved: the vault still holds its USDC, the filler got none, the owner does not exist.
     fn assert_untouched(&self, vault_id: &Address, owner: &Address, filler: &Address) {
         assert_eq!(self.usdc_balance(vault_id), HUNDRED_USDC);
@@ -511,6 +654,7 @@ fn swap_creates_the_owner_account_and_pays_the_oracle_floor() {
         want: FLOOR_FOR_HUNDRED,
         xlm_price: XLM_PRICE,
         usdc_price: USDC_PRICE,
+        discount_ppm: fx.config.discount_ppm,
     };
     assert_eq!(events, std::vec![expected.to_xdr(&fx.env, &vault_id)]);
 }
@@ -583,6 +727,7 @@ fn swap_forwards_an_overpayment_and_any_prior_xlm_to_the_owner() {
         want: FLOOR_FOR_HUNDRED,
         xlm_price: XLM_PRICE,
         usdc_price: USDC_PRICE,
+        discount_ppm: fx.config.discount_ppm,
     };
     assert_eq!(events, std::vec![expected.to_xdr(&fx.env, &vault_id)]);
 }
@@ -613,6 +758,7 @@ fn swap_delivers_to_the_base_account_of_a_muxed_owner() {
         want: FLOOR_FOR_HUNDRED,
         xlm_price: XLM_PRICE,
         usdc_price: USDC_PRICE,
+        discount_ppm: fx.config.discount_ppm,
     };
     assert_eq!(events, std::vec![expected.to_xdr(&fx.env, &vault_id)]);
 }
@@ -1051,6 +1197,98 @@ fn withdraw_requires_the_owner_signature() {
     fx.env.mock_auths(&[]);
     assert!(fx.try_withdraw(&vault_id, &owner, &fx.usdc).is_err());
     assert_eq!(fx.usdc_balance(&vault_id), HUNDRED_USDC);
+}
+
+// The three ways an owner can authorize `withdraw`, under the host's real rules (no mocking):
+// a G account's ed25519 signature (also for an M owner, signed by its base account), a contract owner's
+// `__check_auth`, and a contract owner invoking the vault directly.
+
+#[test]
+fn withdraw_accepts_a_real_signature_from_a_g_owner_and_rejects_another_key() {
+    let fx = fixture();
+    let key = SigningKey::from_bytes(&[7u8; 32]);
+    let other = SigningKey::from_bytes(&[8u8; 32]);
+    let owner_addr = fx.account_for(&key);
+    let owner = fx.strkey(&owner_addr);
+    let vault_id = fx.vault(&owner);
+    fx.fund_usdc(&vault_id, HUNDRED_USDC);
+
+    // Real authorization rules from here: the entry carries a signature the host verifies against the
+    // account's master key.
+    fx.env
+        .set_auths(&[fx.withdraw_auth(&vault_id, &owner, &fx.usdc, &owner_addr, 1, |p| {
+            account_signature(&other, p)
+        })]);
+    assert!(fx.try_withdraw(&vault_id, &owner, &fx.usdc).is_err());
+    assert_eq!(fx.usdc_balance(&vault_id), HUNDRED_USDC);
+
+    fx.env
+        .set_auths(&[fx.withdraw_auth(&vault_id, &owner, &fx.usdc, &owner_addr, 2, |p| {
+            account_signature(&key, p)
+        })]);
+    assert_eq!(fx.withdraw(&vault_id, &owner, &fx.usdc), HUNDRED_USDC);
+    assert_eq!(fx.usdc_balance(&owner_addr), HUNDRED_USDC);
+    assert_eq!(fx.usdc_balance(&vault_id), 0);
+}
+
+#[test]
+fn withdraw_for_a_muxed_owner_accepts_the_base_accounts_real_signature() {
+    let fx = fixture();
+    let key = SigningKey::from_bytes(&[9u8; 32]);
+    let base = fx.account_for(&key);
+    let owner = fx.muxed_strkey(&base, 7);
+    let vault_id = fx.vault(&owner);
+    fx.fund_usdc(&vault_id, HUNDRED_USDC);
+
+    // The credential is the base G account; the invocation carries the M strkey.
+    fx.env
+        .set_auths(&[fx.withdraw_auth(&vault_id, &owner, &fx.usdc, &base, 1, |p| account_signature(&key, p))]);
+    assert_eq!(fx.withdraw(&vault_id, &owner, &fx.usdc), HUNDRED_USDC);
+    assert_eq!(fx.usdc_balance(&base), HUNDRED_USDC);
+}
+
+#[test]
+fn withdraw_by_a_custom_account_owner_runs_its_check_auth() {
+    let fx = fixture();
+    let owner_contract = fx.env.register(CheckAuthOwner, ());
+    let owner = fx.strkey(&owner_contract);
+    let vault_id = fx.vault(&owner);
+    fx.fund_usdc(&vault_id, HUNDRED_USDC);
+
+    // The owner contract refuses: `__check_auth` returns an error and the host fails the call.
+    fx.env
+        .set_auths(&[fx.withdraw_auth(&vault_id, &owner, &fx.usdc, &owner_contract, 1, |_| ScVal::Bool(false))]);
+    assert!(fx.try_withdraw(&vault_id, &owner, &fx.usdc).is_err());
+    assert_eq!(fx.usdc_balance(&vault_id), HUNDRED_USDC);
+
+    // The owner contract approves, having been shown exactly the vault's `withdraw`.
+    fx.env
+        .set_auths(&[fx.withdraw_auth(&vault_id, &owner, &fx.usdc, &owner_contract, 2, |_| ScVal::Bool(true))]);
+    assert_eq!(fx.withdraw(&vault_id, &owner, &fx.usdc), HUNDRED_USDC);
+    assert_eq!(fx.usdc_balance(&owner_contract), HUNDRED_USDC);
+    let seen: Vec<(Address, Symbol)> = fx.env.as_contract(&owner_contract, || {
+        fx.env.storage().instance().get(&symbol_short!("seen")).unwrap()
+    });
+    assert_eq!(
+        seen,
+        soroban_sdk::vec![&fx.env, (vault_id, Symbol::new(&fx.env, "withdraw"))]
+    );
+}
+
+#[test]
+fn withdraw_by_a_contract_owner_that_invokes_directly_needs_no_authorization_entry() {
+    let fx = fixture();
+    let owner_contract = fx.env.register(InvokingOwner, ());
+    let owner = fx.strkey(&owner_contract);
+    let vault_id = fx.vault(&owner);
+    fx.fund_usdc(&vault_id, HUNDRED_USDC);
+
+    // No authorization entries at all: the owner contract is the vault's direct invoker, which satisfies
+    // `require_auth` by itself.
+    fx.env.set_auths(&[]);
+    let got = InvokingOwnerClient::new(&fx.env, &owner_contract).pull(&vault_id, &owner, &fx.factory, &fx.usdc);
+    assert_eq!(got, HUNDRED_USDC);
+    assert_eq!(fx.usdc_balance(&owner_contract), HUNDRED_USDC);
 }
 
 #[test]

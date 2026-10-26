@@ -217,9 +217,10 @@ Compared with the EVM side, "no key can divert the principal" holds with one qua
 discount, the conversion rate is at the relayer's discretion. The 10 % cap comes with the code; users verify
 the oracle and the vault code hash in the immutable factory config, as they verify fee caps in `Config` today.
 
-**Where funds can get stuck.** A C owner that can neither call `withdraw` itself nor implement
-`__check_auth` depends on the relayer forever, and a C owner that cannot use XLM (a token or pool contract)
-loses the XLM: the protocol refuses no owner, so address issuers should not accept such owners. A remainder
+**Where funds can get stuck.** A C owner whose code can neither call `withdraw` nor implement `__check_auth`
+cannot recover its USDC itself (the relayer can convert it to XLM, but cannot make the contract release
+anything), and a C owner that cannot use XLM (a token or pool contract) loses the XLM: the protocol refuses
+no owner, so address issuers should not accept such owners. A remainder
 below `min_delivery`, after a partial batch or a tiny deposit, cannot be swapped on its own and waits for
 the next deposit or the owner's `withdraw`; the relayer should swap whole balances.
 
