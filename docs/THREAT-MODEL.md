@@ -22,16 +22,15 @@
   this model as _external entities and trust boundaries_; the property the model demonstrates is
   that the in-scope contracts bound the damage any of them can cause.
 - **Stellar-side XLM delivery (`stellar/`, not part of this model's audit target):** a second delivery
-  mode adds first-party Soroban contracts on the fund path — `VaultFactory`, per-user `Vault`s and the
-  `AquariusFiller` — plus two new trusted dependencies, Reflector (price feed) and Aquarius (swap venue).
-  It reuses the EVM contracts unchanged: the deposit address simply commits a vault's address as its
-  Stellar recipient, so everything in this document still holds for the EVM hop. The Stellar-side trust
-  model — vault identity by address derivation, the two fund exits, the relayer bounded by an oracle floor
-  with an immutable discount cap, what the admin can and cannot change, and the residual risks (oracle
-  honesty, new users' inability to act before their account exists) — is recorded in
-  [`stellar/docs/DESIGN.md`](../stellar/docs/DESIGN.md) §6; it will be folded into this document, or given its own
-  STRIDE model, before the Stellar contracts are audited. Until then the statement "this repository is the
-  entirety of the team-owned on-chain surface" applies to the USDC→USDC product only.
+  mode adds first-party Soroban contracts on the fund path — `VaultFactory` and per-user `Vault`s, which
+  hold trust, and replaceable filler adapters (`AquariusFiller` today), which do not — plus Reflector's
+  price feed as a trusted dependency. It reuses the EVM contracts unchanged: the deposit address simply
+  commits a vault's address as its Stellar recipient, so everything in this document still holds for the
+  EVM hop. That system has its own STRIDE model, [`stellar/docs/THREAT-MODEL.md`](../stellar/docs/THREAT-MODEL.md),
+  whose audit target is `Vault` and `VaultFactory` and which demonstrates that their guarantees hold for an
+  arbitrary filler; the design and its reasons are in [`stellar/docs/DESIGN.md`](../stellar/docs/DESIGN.md).
+  The statement "this repository is the entirety of the team-owned on-chain surface" therefore reads, for
+  the XLM product: the contracts that hold trust are in this repository and audited; fillers hold none.
 
 ---
 
