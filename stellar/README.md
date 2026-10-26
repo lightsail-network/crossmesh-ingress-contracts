@@ -27,7 +27,9 @@ flowchart TD
     end
 ```
 
-Address derivation, the contracts, the trust model and deployment: [`docs/DESIGN.md`](docs/DESIGN.md).
+Address derivation, the contracts, the trust model and deployment: [`docs/DESIGN.md`](docs/DESIGN.md). The
+STRIDE threat model — audit target `Vault` + `VaultFactory`, fillers modeled as arbitrary code:
+[`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
 
 ## Contracts
 

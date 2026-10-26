@@ -1,9 +1,16 @@
 name: Threat model PDF
 
-# Manually triggered: renders docs/THREAT-MODEL.md (mermaid included) to a PDF and uploads it as a
-# workflow artifact — download it from the run's "Artifacts" section on the Actions page.
+# Manually triggered: renders a threat model (mermaid included) to a PDF and uploads it as a workflow
+# artifact — download it from the run's "Artifacts" section on the Actions page. `document` picks the
+# EVM model (docs/THREAT-MODEL.md) or the Stellar one (stellar/docs/THREAT-MODEL.md).
 on:
   workflow_dispatch:
+    inputs:
+      document:
+        description: Which threat model to render
+        type: choice
+        options: [evm, stellar]
+        default: evm
 
 jobs:
   pdf:
@@ -11,6 +18,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
+
+      - name: Select the document
+        id: doc
+        run: |
+          case "${{ inputs.document }}" in
+            stellar) echo "path=stellar/docs/THREAT-MODEL.md" >> "$GITHUB_OUTPUT"; echo "name=THREAT-MODEL-stellar" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "path=docs/THREAT-MODEL.md"         >> "$GITHUB_OUTPUT"; echo "name=THREAT-MODEL"         >> "$GITHUB_OUTPUT" ;;
+          esac
 
       # mermaid-cli replaces ```mermaid blocks with rendered SVGs. Point puppeteer at the runner's
       # preinstalled Chrome (no ~120MB chromium download); --no-sandbox is required on CI runners.
@@ -22,7 +37,7 @@ jobs:
           {"executablePath": "/usr/bin/google-chrome", "args": ["--no-sandbox"]}
           EOF
           npx -y -p @mermaid-js/mermaid-cli mmdc -p /tmp/puppeteer.json \
-            -i docs/THREAT-MODEL.md -o /tmp/rendered.md --outputFormat svg
+            -i "${{ steps.doc.outputs.path }}" -o /tmp/rendered.md --outputFormat svg
 
       - name: Convert to styled HTML
         run: |
@@ -50,11 +65,11 @@ jobs:
         run: |
           google-chrome --headless=new --disable-gpu --no-sandbox \
             --no-pdf-header-footer \
-            --print-to-pdf=/tmp/THREAT-MODEL.pdf "file:///tmp/page.html"
+            --print-to-pdf="/tmp/${{ steps.doc.outputs.name }}.pdf" "file:///tmp/page.html"
 
       - name: Upload the PDF artifact
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: threat-model-pdf
-          path: /tmp/THREAT-MODEL.pdf
+          name: threat-model-pdf-${{ inputs.document }}
+          path: /tmp/${{ steps.doc.outputs.name }}.pdf
           if-no-files-found: error

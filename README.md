@@ -26,7 +26,8 @@ prescribed value for `CctpForwarder`). See the threat model, DoS.1.R.3.
 per-user Soroban **vault** as its Stellar recipient, and a relayer-triggered, oracle-bounded swap turns the
 delivered USDC into XLM that creates the recipient's account. The EVM contracts, Circle's forwarder and the
 USDC→USDC product are untouched. Entry point: [stellar/README.md](stellar/README.md); design, trust model and
-address derivation: [stellar/docs/DESIGN.md](stellar/docs/DESIGN.md).
+address derivation: [stellar/docs/DESIGN.md](stellar/docs/DESIGN.md); STRIDE threat model:
+[stellar/docs/THREAT-MODEL.md](stellar/docs/THREAT-MODEL.md).
 
 ## Build & test
 
