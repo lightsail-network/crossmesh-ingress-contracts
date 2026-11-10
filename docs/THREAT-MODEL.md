@@ -30,7 +30,8 @@
   whose audit target is `Vault` and `VaultFactory` and which demonstrates that their guarantees hold for an
   arbitrary filler; the design and its reasons are in [`stellar/docs/DESIGN.md`](../stellar/docs/DESIGN.md).
   The statement "this repository is the entirety of the team-owned on-chain surface" therefore reads, for
-  the XLM product: the contracts that hold trust are in this repository and audited; fillers hold none.
+  the XLM product: the contracts that hold trust are in this repository and in that model's audit scope;
+  fillers hold none.
 
 ---
 

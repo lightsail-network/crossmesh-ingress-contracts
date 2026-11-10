@@ -182,8 +182,9 @@ Soroban charges rent per byte kept in the ledger, for at least 120 days on mainn
 per user. Hence the vault stores nothing (its instance is ~100 bytes), the factory keeps no per-vault
 registry, and no contract extends TTLs from inside a call — `extend_ttl` on an instance also extends the
 shared code entry, which would put a large, unpredictable rent bill on a random transaction. The operator
-keeps the factory, the filler and the code entries alive; a vault may archive after 120 idle days and is
-restored automatically by the next transaction that touches it.
+keeps the factory, the filler and the code entries alive; a vault's instance archives 120 days after it was
+deployed or last restored — calling the vault does not extend it — and is restored automatically by the
+next transaction that touches it.
 
 ---
 
@@ -246,7 +247,7 @@ and with it every vault address: freeze both before tagging.
 
 | Parameter | Value |
 |-----------|-------|
-| `usdc`, `xlm` | the USDC and native XLM asset contracts (`../deployments/README.md`) |
+| `usdc`, `xlm` | the USDC and native XLM asset contracts. USDC: mainnet `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`, testnet `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`; native XLM: mainnet `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA`, testnet `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 | `vault_wasm_hash` | hash of the released `vault.wasm` |
 | `oracle` | Reflector CEX Pulse feed: mainnet `CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN`, testnet `CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63` |
 | `xlm_asset`, `usdc_asset` | `Other("XLM")`, `Other("USDC")` |

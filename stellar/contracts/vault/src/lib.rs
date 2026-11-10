@@ -11,7 +11,7 @@
 //!
 //! **The vault is stateless.** Soroban charges rent per byte kept in the ledger (for at least 120 days
 //! on mainnet), and there is one vault per user, so the instance entry is the dominant per-user cost.
-//! Storing nothing makes it ~100 bytes, the bare executable reference (design §5.5). Hence no constructor
+//! Storing nothing makes it ~100 bytes, just the code hash (design §5.5). Hence no constructor
 //! and no instance storage. The vault's identity is its address, which the protocol derives from
 //! `(factory, sha256(owner strkey))`: every call passes `owner` and `factory` as arguments and the vault
 //! checks `deployer(factory, sha256(owner)).deployed_address() == current_contract_address()`. A match
