@@ -372,7 +372,8 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   checked arithmetic and fails closed on overflow (`Overflow`). Reading the USDC price too, from the same
   feed, means a de-peg lowers the floor instead of freezing swaps. Covered by
   `swap_rejects_a_missing_or_non_positive_oracle_price`, `swap_rejects_a_stale_oracle_price`,
-  `swap_rejects_an_oracle_price_from_the_future` and `swap_accepts_an_oracle_record_exactly_at_the_age_limit`.
+  `swap_rejects_an_oracle_price_from_the_future`, `swap_accepts_an_oracle_record_exactly_at_the_age_limit`
+  and `swap_fails_closed_when_the_floor_computation_overflows`.
 - **Tamper.6.R.2** — _Risk accepted (the design's single trust point):_ a **wrong but updating** price
   passes every check, and then the relayer's `min_out` — set from a live quote by Cross Mesh's own
   software — is the only protection. The feed is Reflector's CEX-aggregate feed rather than its
@@ -466,11 +467,13 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   `max_price_age` of zero or above the cap, a non-positive `min_delivery`, `usdc == xlm`, `oracle == usdc`,
   `oracle == xlm` — but cannot tell a canonical asset contract or feed from a plausible impostor
   (`constructor_rejects_a_discount_above_the_cap`, `constructor_rejects_a_price_age_above_the_cap`,
-  `constructor_rejects_usdc_equal_to_xlm`). _Operational:_ the deployment script reads back every code hash
-  and configuration value after deploying and offers the same check without a key (`verify`), and an
-  address is issued for a network only after that verification (Appendix A). _Risk accepted:_ `VaultConfig` is
-  permanent — a wrong value cannot be corrected without a new factory, which moves every vault and deposit
-  address; an uncorrected factory is simply never issued addresses.
+  `constructor_rejects_a_zero_price_age`, `constructor_rejects_a_zero_min_delivery`,
+  `constructor_rejects_usdc_equal_to_xlm`, `constructor_rejects_the_usdc_contract_as_the_oracle`,
+  `constructor_rejects_the_xlm_contract_as_the_oracle`). _Operational:_ the deployment script reads back
+  every code hash and configuration value after deploying and offers the same check without a key
+  (`verify`), and an address is issued for a network only after that verification (Appendix A). _Risk
+  accepted:_ `VaultConfig` is permanent — a wrong value cannot be corrected without a new factory, which
+  moves every vault and deposit address; an uncorrected factory is simply never issued addresses.
 - **DoS.10.R.1** — _Risk accepted (residual):_ the factory has no function that moves tokens, and the launch
   filler serves vault code only, so tokens mis-sent to either are unspendable. Only vault addresses are
   ever committed as recipients, so no protocol flow can mis-route there; the mis-sender has no on-chain
@@ -563,7 +566,7 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   real rules (Spoof.4), and made explicit that what the design protects is the owner's value at the floor,
   not the USDC itself (Scope, Elevation.6).
 - **Are the treatments adequate?** Every mitigation implemented in the contracts is exercised by the test
-  suite: 55 tests across the three crates (36 vault, 13 factory, 6 filler), run by `cargo test --locked`
+  suite: 62 tests across the three crates (38 vault, 18 factory, 6 filler), run by `cargo test --locked`
   in CI together with `cargo fmt --check` and `cargo clippy --all-targets -D warnings`. The vault suite
   drives `swap` and `withdraw` against a configurable fake filler with six behaviours — pay exactly
   `want`, pay nothing, pay short, overpay, re-enter the vault, pull extra USDC in the vault's name — and a

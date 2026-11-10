@@ -211,6 +211,54 @@ fn constructor_rejects_a_price_age_above_the_cap() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #2)")] // InvalidConfig
+fn constructor_rejects_a_zero_price_age() {
+    let fx = fixture();
+    let mut config = fx.config.clone();
+    config.max_price_age = 0;
+    fx.env.register(VaultFactory, (fx.admin.clone(), config));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")] // InvalidConfig
+fn constructor_rejects_a_zero_min_delivery() {
+    let fx = fixture();
+    let mut config = fx.config.clone();
+    config.min_delivery = 0;
+    fx.env.register(VaultFactory, (fx.admin.clone(), config));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")] // InvalidConfig
+fn constructor_rejects_the_usdc_contract_as_the_oracle() {
+    let fx = fixture();
+    let mut config = fx.config.clone();
+    config.oracle = config.usdc.clone();
+    fx.env.register(VaultFactory, (fx.admin.clone(), config));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")] // InvalidConfig
+fn constructor_rejects_the_xlm_contract_as_the_oracle() {
+    let fx = fixture();
+    let mut config = fx.config.clone();
+    config.oracle = config.xlm.clone();
+    fx.env.register(VaultFactory, (fx.admin.clone(), config));
+}
+
+#[test]
+fn constructor_accepts_values_exactly_at_the_bounds() {
+    let fx = fixture();
+    let mut config = fx.config.clone();
+    // The bounds are inclusive: both caps themselves, and the smallest positive `min_delivery`.
+    config.discount_ppm = DISCOUNT_CAP_PPM;
+    config.max_price_age = MAX_PRICE_AGE_CAP;
+    config.min_delivery = 1;
+    let factory = fx.env.register(VaultFactory, (fx.admin.clone(), config.clone()));
+    assert_eq!(VaultFactoryClient::new(&fx.env, &factory).config(), config);
+}
+
+#[test]
 fn set_discount_is_admin_only_bounded_by_the_cap_and_used_by_the_next_swap() {
     let fx = fixture();
     let client = fx.client();
@@ -249,13 +297,30 @@ fn set_relayer_and_set_admin_are_admin_only() {
     let client = fx.client();
     let new_relayer = Address::generate(&fx.env);
     client.set_relayer(&new_relayer, &true);
+    let events = fx.env.events().all().filter_by_contract(&fx.factory);
     assert_eq!(fx.env.auths()[0].0, fx.admin);
+    let enabled = RelayerSet {
+        relayer: new_relayer.clone(),
+        enabled: true,
+    };
+    assert_eq!(events, std::vec![enabled.to_xdr(&fx.env, &fx.factory)]);
     assert!(client.is_relayer(&new_relayer));
     client.set_relayer(&new_relayer, &false);
+    let events = fx.env.events().all().filter_by_contract(&fx.factory);
+    let disabled = RelayerSet {
+        relayer: new_relayer.clone(),
+        enabled: false,
+    };
+    assert_eq!(events, std::vec![disabled.to_xdr(&fx.env, &fx.factory)]);
     assert!(!client.is_relayer(&new_relayer));
 
     let new_admin = MuxedAddress::generate(&fx.env).address();
     client.set_admin(&new_admin);
+    let events = fx.env.events().all().filter_by_contract(&fx.factory);
+    let handed_over = AdminSet {
+        admin: new_admin.clone(),
+    };
+    assert_eq!(events, std::vec![handed_over.to_xdr(&fx.env, &fx.factory)]);
     let signers: std::vec::Vec<Address> = fx.env.auths().into_iter().map(|(who, _)| who).collect();
     assert!(signers.contains(&fx.admin) && signers.contains(&new_admin));
     assert_eq!(client.admin(), new_admin);
@@ -421,7 +486,7 @@ fn swap_requires_the_relayer_signature() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Error(Contract, #2)")] // InvalidConfig
 fn constructor_rejects_usdc_equal_to_xlm() {
     let fx = fixture();
     let mut config = fx.config.clone();
