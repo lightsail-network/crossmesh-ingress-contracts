@@ -440,7 +440,7 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   _Risk accepted:_ such a remainder waits for the next deposit, or for the owner's `withdraw`; the relayer
   should swap whole balances (`amount = None`), which keeps remainders from arising. Covered by
   `swap_rejects_a_delivery_below_the_minimum`.
-- **DoS.6.R.1** — The vault stores nothing, so its ledger footprint is the bare executable reference; the
+- **DoS.6.R.1** — The vault stores nothing, so its ledger footprint is a bare instance entry (a code hash); the
   factory keeps no per-vault registry; and **no contract extends TTLs from inside a call** — an in-contract
   `extend_ttl` on an instance also extends the shared code entry and would put a large, unpredictable rent
   bill on a random user's transaction. _Operational:_ the operator keeps the factory instance, the filler
@@ -531,11 +531,6 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   (`contracts/aquarius-filler/src/test.rs`) and by the factory's end-to-end test under real authorization
   rules (`swap_through_the_aquarius_filler_under_real_authorization_rules`), but it is not a security
   dependency of this model.
-- **Elevation.6.R.1** — _Risk accepted (by design):_ an XLM-delivery address is a request for conversion;
-  `withdraw` is the escape hatch for when conversion does not happen, not a right to keep the USDC. A swap
-  that lands before a `withdraw` pays the owner XLM at no less than `want`, bounded like every swap
-  (Elevation.1); the contracts offer no ordering between the two and the vault cannot see a pending
-  `withdraw`. An owner who wants USDC on Stellar should be issued a USDC-delivery address instead.
 - **Elevation.4.R.1** — `deploy` gives the caller nothing (Spoof.5.R.1); `mint_and_forward` puts USDC into
   the vault, which only the owner can benefit from; tokens donated to a vault belong to the owner, who can
   `withdraw` any token (`withdraw_works_for_any_token_the_vault_holds`), and donated XLM rides along with
@@ -545,6 +540,11 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   config, and `withdraw` needs neither key. _Risk accepted:_ within that ceiling the conversion rate is
   at Cross Mesh's discretion; users verify the cap, the oracle and the vault code hash in the immutable
   factory config, as they verify fee caps in the EVM `Config` today.
+- **Elevation.6.R.1** — _Risk accepted (by design):_ an XLM-delivery address is a request for conversion;
+  `withdraw` is the escape hatch for when conversion does not happen, not a right to keep the USDC. A swap
+  that lands before a `withdraw` pays the owner XLM at no less than `want`, bounded like every swap
+  (Elevation.1); the contracts offer no ordering between the two and the vault cannot see a pending
+  `withdraw`. An owner who wants USDC on Stellar should be issued a USDC-delivery address instead.
 
 ---
 
@@ -619,6 +619,7 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   only from that factory and that network's passphrase — the same owner has different vaults on mainnet
   and testnet. Address issuers must refuse C owners that cannot authorize or cannot use XLM (DoS.8).
 - **Rent:** the operator keeps the factory instance, the launch filler and the three code entries alive
-  with `ExtendFootprintTTL` operations; no contract extends TTLs itself (DoS.6). Vaults may archive after
-  120 idle days on mainnet and are restored by the next transaction that lists them in its restore
-  footprint, which RPC simulation does automatically (DoS.6).
+  with `ExtendFootprintTTL` operations; no contract extends TTLs itself (DoS.6). A vault's instance
+  archives 120 days after it was deployed or last restored on mainnet — calling the vault does not extend
+  it — and is restored by the next transaction that lists it in its restore footprint, which RPC
+  simulation does automatically (DoS.6).
