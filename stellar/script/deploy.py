@@ -43,7 +43,7 @@ CRATES = ("vault", "vault-factory", "aquarius-filler")
 
 DISCOUNT_CAP_PPM = 100_000  # the contracts refuse anything above (DISCOUNT_CAP_PPM in crossmesh-interfaces)
 DEFAULT_DISCOUNT_PPM = 10_000  # 1 %
-MAX_PRICE_AGE = 360  # seconds: one 5-minute oracle update plus slack
+MAX_PRICE_AGE = 420  # seconds: a 5-minute oracle update, its ~45 s publication delay and a minute of slack
 MIN_DELIVERY = 20_000_000  # 2 XLM
 
 

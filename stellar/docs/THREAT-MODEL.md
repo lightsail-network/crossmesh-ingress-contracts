@@ -368,7 +368,7 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   the measured delta as `amount_out`. See Elevation.3.
 - **Tamper.6.R.1** — Both records are validated: present, `price > 0`, `timestamp ≤ now + 60 s` (a record
   from the future is a broken feed, not a fresh price) and `now − timestamp ≤ max_price_age`, with
-  `max_price_age` configured at 360 s against a 5-minute feed and capped at 900 s in code. The floor uses
+  `max_price_age` configured at 420 s against a 5-minute feed and capped at 900 s in code. The floor uses
   checked arithmetic and fails closed on overflow (`Overflow`). Reading the USDC price too, from the same
   feed, means a de-peg lowers the floor instead of freezing swaps. Covered by
   `swap_rejects_a_missing_or_non_positive_oracle_price`, `swap_rejects_a_stale_oracle_price`,
@@ -489,7 +489,7 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   owner, swap below the floor, or touch `withdraw`. The value it can extract per settlement —
   by choosing a filler that pays exactly `want` and picking the moment — is the current `discount_ppm`
   plus the XLM/USD move since the oracle's last update, with the record at most `max_price_age` old
-  (configured 360 s, capped 900 s). Keys are revocable per address via `set_relayer`.
+  (configured 420 s, capped 900 s). Keys are revocable per address via `set_relayer`.
 - **Elevation.2.R.1** — Admin worst case is bounded by the code-fixed caps: it can enable relayers (which
   grants relayer tier, Elevation.1), raise the discount to 10 %, and hand over the role. It **cannot**
   change the oracle, the asset contracts, the vault code hash, `max_price_age` or `min_delivery`; cannot
@@ -608,7 +608,7 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   attestations first, skips what is already on chain, and ends by reading back every code hash and
   configuration value; `verify --deployer G…` repeats that check with no key at all. The parameters —
   USDC and native XLM asset contracts, the Reflector CEX Pulse feed and its `Other("XLM")` /
-  `Other("USDC")` identifiers, `discount_ppm ≈ 1 %`, `max_price_age = 360 s`, `min_delivery = 2 XLM` —
+  `Other("USDC")` identifiers, `discount_ppm ≈ 1 %`, `max_price_age = 420 s`, `min_delivery = 2 XLM` —
   are listed in `DESIGN.md` §7. Everything but `discount_ppm` is immutable; a change means a new factory
   and therefore new vault and deposit addresses.
 - **Issuing addresses per network:** never hand out a deposit address committed to a vault before the

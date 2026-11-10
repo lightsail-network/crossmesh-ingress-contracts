@@ -100,7 +100,7 @@ fn build_config(env: &Env, usdc: &Address, xlm: &Address, oracle: &Address) -> V
         xlm_asset: OracleAsset::Other(symbol_short!("XLM")),
         usdc_asset: OracleAsset::Other(symbol_short!("USDC")),
         discount_ppm: 10_000, // 1 %
-        max_price_age: 360,
+        max_price_age: 420,
         min_delivery: 20_000_000, // 2 XLM
     }
 }
