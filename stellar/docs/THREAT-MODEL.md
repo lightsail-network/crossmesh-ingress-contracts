@@ -8,42 +8,34 @@
 
 ## Scope
 
-- **In scope (the audit target):** the two Soroban contracts that hold trust in `stellar/` — `Vault`
-  (`contracts/vault`, one stateless instance per user) and `VaultFactory` (`contracts/vault-factory`, one
-  per network) — together with `crossmesh-interfaces` (`packages/interfaces`), the crate of types and
-  cross-contract client traits compiled into both, all as built by the toolchain pinned in
-  `stellar/rust-toolchain.toml` and released by `.github/workflows/stellar-release.yml` (Appendix A).
-- **Parties:** _Cross Mesh_ operates the system — it holds the `VaultFactory` admin key and the relayer
-  keys, runs the backend that derives addresses, and runs the relayer that triggers swaps. _Integrators_
-  obtain deposit addresses through its API and hand them to _users_ (the vault owners). Neither party is
-  trusted with principal.
-- **Fillers are out of scope and modeled as arbitrary code.** `AquariusFiller` (`contracts/aquarius-filler`)
-  is the launch venue adapter and ships in this repository, but it is not part of the audit target, and
-  neither is any filler added later. The filler is a per-call argument chosen by the relayer; the property
-  this model demonstrates — and the one the audit is asked to confirm — is that **the vault's guarantees
-  hold for an arbitrary `filler` address, including one written by an attacker**: the vault accepts a
-  fill only by measuring its own XLM balance, reverts atomically otherwise, grants the filler no
-  authorization beyond the single transfer it makes itself, and pays its whole XLM balance to an owner the
-  filler cannot choose (Elevation.3). A hostile filler is therefore a special case of a hostile relayer,
-  never a new trust tier. Fillers hold no funds between calls; a fill that falls short reverts, so a filler's failure modes are
-  liveness only, and a fill that succeeds has bought the USDC for no less than `want` in XLM.
-- **Out of scope, modeled as adversarial or as a trusted dependency:** the Cross Mesh backend and relayer
-  software and the custody of the admin and relayer keys (adversarial); the Aquarius router and pools
-  behind the launch filler (adversarial, reached only through a filler); Reflector's price feed (**the one
-  trusted dependency the design accepts**, Tamper.5); Circle's `CctpForwarder` and its issuer powers over
-  USDC, and the Stellar protocol itself including the native-XLM and USDC Stellar Asset Contracts
-  (trusted platform). The EVM contracts that get the USDC here are covered by their own model.
+- **In scope (the audit target):** `Vault` (`contracts/vault`, one stateless instance per user) and
+  `VaultFactory` (`contracts/vault-factory`, one per network), together with `crossmesh-interfaces`
+  (`packages/interfaces`), the types and client traits compiled into both — all as built by the pinned
+  toolchain and released by `.github/workflows/stellar-release.yml` (Appendix A).
+- **Parties:** _Cross Mesh_ holds the factory admin key and the relayer keys and runs the backend that
+  derives addresses. _Integrators_ obtain deposit addresses through its API and hand them to _users_ (the
+  vault owners). Neither party is trusted with principal.
+- **Fillers are out of scope and modeled as arbitrary code.** The filler is a per-call argument chosen by
+  the relayer. `AquariusFiller` (`contracts/aquarius-filler`) is the launch adapter and ships in this
+  repository, but neither it nor any later filler is part of the audit target. The property the audit is
+  asked to confirm is that **the vault's guarantees hold for an arbitrary `filler` address, including one
+  written by an attacker** (Elevation.3): a hostile filler is a special case of a hostile relayer, never a
+  new trust tier.
+- **Also out of scope:** the Cross Mesh backend and relayer software, the custody of the admin and relayer
+  keys, and the Aquarius router and pools behind the launch filler (all adversarial); Reflector's price
+  feed (**the one trusted dependency the design accepts**, Tamper.5); Circle's `CctpForwarder` and its
+  issuer powers over USDC, and the Stellar protocol with its native-XLM and USDC asset contracts (trusted
+  platform). The EVM contracts that get the USDC here are covered by their own model.
 - **What this model demonstrates.** With the relayer, the admin and the filler all adversarial, the four
-  invariants of the design (`stellar/docs/DESIGN.md` §6) hold: **I1** USDC leaves a vault only through
-  `swap` (to the filler, inside the invocation that must return XLM) or `withdraw` (to the owner); **I2**
-  XLM leaves a vault only to the owner; **I3** a vault's code and owner are fixed, nothing is upgradable,
-  and its address depends on nothing else; **I4** every `swap` delivers at least `max(min_out, floor)`,
-  the floor being an oracle price at most `max_price_age` old minus `discount_ppm`, both capped in code
-  (900 s, 10 %). **What is protected is value, not the USDC itself:** a swap sells the USDC to the
-  relayer-chosen filler, so the owner's guarantee is at least `max(min_out, floor)` in XLM, paid to an
-  address no key and no filler can choose. The only value at risk is `discount_ppm` plus the XLM/USD move
-  since the oracle's last update, per settlement, while the oracle is honest; a filler that pays exactly
-  `want` keeps any surplus above it, which is that same bound, not a new one.
+  invariants of the design (`DESIGN.md` §6) hold: **I1** USDC leaves a vault only through `swap` (to the
+  filler, in an invocation that must return XLM) or `withdraw` (to the owner); **I2** XLM leaves a vault
+  only to the owner; **I3** a vault's code and owner are fixed and nothing is upgradable; **I4** every
+  `swap` delivers at least `max(min_out, floor)`, the floor being an oracle price at most `max_price_age`
+  old minus `discount_ppm`, both capped in code (900 s, 10 %). **What is protected is value, not the USDC
+  itself:** a swap sells the USDC to the relayer-chosen filler, and the owner receives at least
+  `max(min_out, floor)` in XLM at an address no key and no filler can choose. The value at risk per
+  settlement is `discount_ppm` plus the XLM/USD move since the oracle's last update, while the oracle is
+  honest.
 
 ---
 
@@ -390,7 +382,8 @@ outside the audited code. The tests behind each treatment are listed at the end 
   (`OracleStale`, `OracleUnavailable`); the USDC stays in the vault for a retry and `withdraw` is
   unaffected. There is no override: a relayer cannot bypass the floor while the feed is down, which is the
   intended failure mode — halting is safer than converting blind. _Risk accepted:_ a permanently
-  discontinued feed halts swaps permanently under this factory; a new factory would be needed (Appendix A).
+  discontinued feed halts swaps permanently under this factory; a new factory would be needed
+  (`DESIGN.md` §7).
 - **DoS.3.R.1** — A failing filler fails only its own transaction; nothing is moved and the USDC stays for a
   retry. The filler is a per-call argument, so the relayer switches venue with no governance action — this
   is also how adapters are retired and how future fillers are added, with no change to the audited
@@ -577,37 +570,27 @@ are risk acceptances, operational controls or structural facts have no row.
 
 ## Appendix A — Key management & deployment
 
-- **Admin:** one key per network, held cold. Its custody is deliberately NOT part of the security model:
-  the code-fixed caps bound even a fully compromised admin (Elevation.2), which is what lets users verify
-  the worst case without trusting any key-management claim. Rotation is `set_admin`, which the new admin
-  must sign too.
-- **Relayers:** hot keys sized for throughput, enabled and revoked per address with `set_relayer`; a
-  relayer can only trigger bounded swaps (Elevation.1). Disabling every relayer is the halt switch for
-  conversions; nothing halts `withdraw`.
-- **Determinism:** the contracts are built only from a GitHub release — a `stellar-v<version>` tag runs
-  StellarExpert's reproducible build with attestation (`.github/workflows/stellar-release.yml`), which is
-  what StellarExpert validates deployed contracts against. `vault_wasm_hash` is the hash of the released
-  `vault.wasm` and is part of the immutable config, so it fixes the code of every vault forever. The wasm's
-  contract spec embeds the doc comments of the contract's functions and exported types (including those
-  from `crossmesh-interfaces`), so editing one of those doc comments changes the hash and with it every
-  vault address; ordinary comments do not. The toolchain is pinned in `stellar/rust-toolchain.toml`; `soroban-sdk`
-  29.
-- **Deployment order and verification:** per network, upload the three codes, deploy
-  `VaultFactory(admin, config)`, `set_relayer`, deploy `AquariusFiller(router, vault_wasm_hash)`; vaults
-  are deployed lazily. `stellar/script/deploy.py` performs this from a release, verifies the build
-  attestations first, skips what is already on chain, and ends by reading back every code hash and
-  configuration value; `verify --deployer G…` repeats that check with no key at all. The parameters —
-  USDC and native XLM asset contracts, the Reflector CEX Pulse feed and its `Other("XLM")` /
-  `Other("USDC")` identifiers, `discount_ppm ≈ 1 %`, `max_price_age = 420 s`, `min_delivery = 2 XLM` —
-  are listed in `DESIGN.md` §7. Everything but `discount_ppm` is immutable; a change means a new factory
-  and therefore new vault and deposit addresses.
-- **Issuing addresses per network:** never hand out a deposit address committed to a vault before the
-  factory on that network has been verified against the published parameters (DoS.9), and derive vaults
-  only from that factory and that network's passphrase — the same owner has different vaults on mainnet
-  and testnet. Address issuers must refuse C owners that cannot authorize or cannot use XLM, and custodial
-  G addresses that need a memo — the custodian's M address is the form to use (DoS.8).
+The _operational_ treatments of §3 rely on the controls below. The deployment procedure and the parameters
+are in `DESIGN.md` §7.
+
+- **Keys:** one admin key per network, held cold, and relayer hot keys that are enabled and revoked per
+  address with `set_relayer`. Their custody is deliberately NOT part of the security model: the code-fixed
+  caps bound even a fully compromised admin and relayer (Elevation.1, Elevation.2), which is what lets
+  users verify the worst case without trusting any key-management claim. Disabling every relayer is the
+  halt switch for conversions; nothing halts `withdraw`.
+- **Released code only:** contracts are deployed from a GitHub release — a `stellar-v<version>` tag runs
+  StellarExpert's reproducible build with attestation (`.github/workflows/stellar-release.yml`).
+  `vault_wasm_hash` is the hash of the released `vault.wasm` and part of the immutable config, so it fixes
+  the code of every vault forever.
+- **Verify before issuing addresses:** `stellar/script/deploy.py` verifies the build attestations and ends
+  by reading back every code hash and configuration value; `verify --deployer G…` repeats that check with
+  no key at all. No deposit address is handed out for a network before its factory has passed that check
+  (DoS.9), and vaults are derived only from that factory and that network's passphrase — the same owner
+  has different vaults on mainnet and testnet.
+- **Owners to refuse:** C owners that cannot authorize or cannot use XLM, and custodial G addresses that
+  need a memo — the custodian's M address is the form to use (DoS.8).
 - **Rent:** the operator keeps the factory instance, the launch filler and the three code entries alive
   with `ExtendFootprintTTL` operations; no contract extends TTLs itself (DoS.6). A vault's instance
   archives 120 days after it was deployed or last restored on mainnet — calling the vault does not extend
   it — and is restored by the next transaction that lists it in its restore footprint, which RPC
-  simulation does automatically (DoS.6).
+  simulation does automatically.
