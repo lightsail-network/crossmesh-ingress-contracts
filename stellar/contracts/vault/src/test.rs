@@ -7,12 +7,14 @@ use crossmesh_interfaces::{OracleAsset, PriceData, VaultConfig, DISCOUNT_CAP_PPM
 use ed25519_dalek::{Signer, SigningKey};
 use soroban_sdk::auth::{Context, CustomAccountInterface};
 use soroban_sdk::crypto::Hash;
-use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _, MuxedAddress as _, StellarAssetContract};
+use soroban_sdk::testutils::{
+    Address as _, ContractEvents, Events as _, Ledger as _, MuxedAddress as _, StellarAssetContract,
+};
 use soroban_sdk::xdr::{
-    AccountId, HashIdPreimage, HashIdPreimageSorobanAuthorization, InvokeContractArgs, Limits, PublicKey, ScAddress,
-    ScBytes, ScErrorCode, ScErrorType, ScMap, ScMapEntry, ScSymbol, ScVal, ScVec, SorobanAddressCredentials,
-    SorobanAuthorizationEntry, SorobanAuthorizedFunction, SorobanAuthorizedInvocation, SorobanCredentials, StringM,
-    Uint256, VecM, WriteXdr,
+    AccountId, ContractEventBody, HashIdPreimage, HashIdPreimageSorobanAuthorization, InvokeContractArgs, Limits,
+    PublicKey, ScAddress, ScBytes, ScErrorCode, ScErrorType, ScMap, ScMapEntry, ScSymbol, ScVal, ScVec,
+    SorobanAddressCredentials, SorobanAuthorizationEntry, SorobanAuthorizedFunction, SorobanAuthorizedInvocation,
+    SorobanCredentials, StringM, Uint256, VecM, WriteXdr,
 };
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Bytes, BytesN,
@@ -212,6 +214,18 @@ fn contract_err<T, C>(code: u32) -> Result<Result<T, C>, Result<soroban_sdk::Err
 }
 
 type TryResult = Result<Result<i128, soroban_sdk::Error>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>;
+
+/// The `to_muxed_id` of the last `transfer` event in a token contract's events, if it carries one (CAP-0067).
+fn transfer_muxed_id(token_events: &ContractEvents) -> Option<u64> {
+    let ContractEventBody::V0(body) = &token_events.events().last()?.body;
+    let ScVal::Map(Some(data)) = &body.data else {
+        return None;
+    };
+    data.iter().find_map(|entry| match (&entry.key, &entry.val) {
+        (ScVal::Symbol(key), ScVal::U64(id)) if key.to_utf8_string_lossy() == "to_muxed_id" => Some(*id),
+        _ => None,
+    })
+}
 
 /// The signature a classic account presents: `Vec<AccountEd25519Signature { public_key, signature }>`.
 fn account_signature(key: &SigningKey, payload: [u8; 32]) -> ScVal {
@@ -742,10 +756,14 @@ fn swap_delivers_to_the_base_account_of_a_muxed_owner() {
     let filler = fx.filler(FillMode::PayWant);
 
     let out = fx.swap(&vault_id, &owner, &filler, HUNDRED_USDC, 0);
-    let events = fx.env.events().all().filter_by_contract(&vault_id);
+    let all = fx.env.events().all();
+    let events = all.filter_by_contract(&vault_id);
 
     assert!(account_exists(&fx.env, &base));
     assert_eq!(fx.xlm_balance(&base), out);
+    // The payout names the M address itself, so the token's transfer event carries its id: that is what
+    // lets a custodian credit the payment.
+    assert_eq!(transfer_muxed_id(&all.filter_by_contract(&fx.xlm)), Some(42));
     let expected = Swapped {
         owner: base.clone(),
         owner_strkey: owner.clone(),
@@ -916,8 +934,14 @@ fn swap_rejects_an_oracle_price_from_the_future() {
         fx.try_swap(&vault_id, &owner, &filler, HUNDRED_USDC, 0),
         contract_err(VaultError::OracleStale as u32)
     );
-    // A few seconds of skew between the feed's grid and ledger time is tolerated.
-    fx.oracle().set_price(&xlm_asset(), &XLM_PRICE, &(NOW + 30));
+    // A little skew between the feed's grid and ledger time is tolerated: 60 s (`MAX_CLOCK_SKEW`), not a
+    // second more.
+    fx.oracle().set_price(&xlm_asset(), &XLM_PRICE, &(NOW + 61));
+    assert_eq!(
+        fx.try_swap(&vault_id, &owner, &filler, HUNDRED_USDC, 0),
+        contract_err(VaultError::OracleStale as u32)
+    );
+    fx.oracle().set_price(&xlm_asset(), &XLM_PRICE, &(NOW + 60));
     assert_eq!(fx.swap(&vault_id, &owner, &filler, HUNDRED_USDC, 0), FLOOR_FOR_HUNDRED);
 }
 
@@ -944,17 +968,69 @@ fn swap_rejects_an_unusable_config() {
         invalid
     );
     let mut c = fx.config.clone();
-    c.xlm = fx.usdc.clone();
-    assert_eq!(
-        fx.try_swap_cfg(&vault_id, &owner, &filler, HUNDRED_USDC, 0, &c),
-        invalid
-    );
-    let mut c = fx.config.clone();
     c.max_price_age = MAX_PRICE_AGE_CAP + 1;
     assert_eq!(
         fx.try_swap_cfg(&vault_id, &owner, &filler, HUNDRED_USDC, 0, &c),
         invalid
     );
+    fx.assert_untouched(&vault_id, &owner_addr, &filler);
+
+    // USDC and XLM being one contract. This filler could pay in that token, so only the vault's own check
+    // stands in the way: a filler without USDC would fail in the token contract with ITS error #10 (balance),
+    // the same number as `InvalidConfig`, and prove nothing.
+    let usdc_filler = fx.filler(FillMode::PayWant);
+    fx.fund_usdc(&usdc_filler, 1_000 * ONE);
+    let mut c = fx.config.clone();
+    c.xlm = fx.usdc.clone();
+    assert_eq!(
+        fx.try_swap_cfg(&vault_id, &owner, &usdc_filler, HUNDRED_USDC, 0, &c),
+        invalid
+    );
+    assert_eq!(fx.usdc_balance(&vault_id), HUNDRED_USDC);
+}
+
+#[test]
+fn swap_accepts_a_discount_and_a_price_age_exactly_at_their_caps() {
+    let fx = fixture();
+    let owner = fx.strkey(&fx.new_account());
+    let vault_id = fx.vault(&owner);
+    fx.fund_usdc(&vault_id, HUNDRED_USDC);
+    let filler = fx.filler(FillMode::PayWant);
+    let mut config = fx.config.clone();
+    config.discount_ppm = DISCOUNT_CAP_PPM;
+    config.max_price_age = MAX_PRICE_AGE_CAP;
+    // A record as old as the cap allows.
+    fx.oracle()
+        .set_price(&xlm_asset(), &XLM_PRICE, &(NOW - MAX_PRICE_AGE_CAP));
+
+    // 100 USDC at $0.50/XLM minus 10 % = 180 XLM.
+    assert_eq!(
+        fx.swap_cfg(&vault_id, &owner, &filler, HUNDRED_USDC, 0, &config),
+        180 * ONE
+    );
+}
+
+#[test]
+fn swap_fails_closed_when_the_floor_computation_overflows() {
+    let fx = fixture();
+    let owner_addr = fx.new_account();
+    let owner = fx.strkey(&owner_addr);
+    let vault_id = fx.vault(&owner);
+    fx.fund_usdc(&vault_id, HUNDRED_USDC);
+    let filler = fx.filler(FillMode::PayWant);
+    let overflow = contract_err(VaultError::Overflow as u32);
+
+    // amount × P(USDC) does not fit in an i128…
+    fx.oracle()
+        .set_price(&usdc_asset(), &(i128::MAX / HUNDRED_USDC + 1), &NOW);
+    assert_eq!(fx.try_swap(&vault_id, &owner, &filler, HUNDRED_USDC, 0), overflow);
+    // …or it does, and the product with (PPM − discount) does not…
+    fx.oracle().set_price(&usdc_asset(), &(i128::MAX / HUNDRED_USDC), &NOW);
+    assert_eq!(fx.try_swap(&vault_id, &owner, &filler, HUNDRED_USDC, 0), overflow);
+    // …or P(XLM) × PPM does not.
+    fx.oracle().set_price(&usdc_asset(), &USDC_PRICE, &NOW);
+    fx.oracle().set_price(&xlm_asset(), &(i128::MAX / PPM + 1), &NOW);
+    assert_eq!(fx.try_swap(&vault_id, &owner, &filler, HUNDRED_USDC, 0), overflow);
     fx.assert_untouched(&vault_id, &owner_addr, &filler);
 }
 
@@ -971,7 +1047,17 @@ fn swap_rejects_a_delivery_below_the_minimum() {
     let r = fx.try_swap(&vault_id, &owner, &filler, ONE / 10, 0);
 
     assert_eq!(r, contract_err(VaultError::BelowMinDelivery as u32));
+
+    // The minimum applies to `want`, so the relayer's own `min_out` can lift a small amount over it (the
+    // filler then has to pay that much): one stroop below the minimum is refused, exactly the minimum is served.
+    let min = fx.config.min_delivery;
+    assert_eq!(
+        fx.try_swap(&vault_id, &owner, &filler, ONE, min - 1),
+        contract_err(VaultError::BelowMinDelivery as u32)
+    );
     fx.assert_untouched(&vault_id, &owner_addr, &filler);
+    assert_eq!(fx.swap(&vault_id, &owner, &filler, ONE, min), min);
+    assert_eq!(fx.xlm_balance(&owner_addr), min);
 }
 
 #[test]
@@ -1125,10 +1211,13 @@ fn withdraw_for_a_muxed_owner_is_signed_by_the_base_account() {
     fx.fund_usdc(&vault_id, HUNDRED_USDC);
 
     assert_eq!(fx.withdraw(&vault_id, &owner, &fx.usdc), HUNDRED_USDC);
+    let token_events = fx.env.events().all().filter_by_contract(&fx.usdc);
     let auths = fx.env.auths();
 
     assert_eq!(fx.usdc_balance(&base), HUNDRED_USDC);
     assert_eq!(auths[0].0, base);
+    // Paid to the M address itself: the token's transfer event carries its id.
+    assert_eq!(transfer_muxed_id(&token_events), Some(7));
 }
 
 #[test]
