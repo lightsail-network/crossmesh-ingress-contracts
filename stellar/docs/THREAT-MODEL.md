@@ -267,7 +267,7 @@ STRIDE applied per flow. IDs below are referenced by the remediations in §3.
 
 Every treatment below is **implemented in the contracts and tested** unless marked _risk accepted_ or
 _operational_ — the latter are controls that Cross Mesh's backend, deployment or operations must enforce,
-outside the audited code. The tests behind each treatment are listed at the end of this section.
+outside the audited code. The tests behind each treatment are listed in Appendix B.
 
 ### Spoofing
 
@@ -486,41 +486,6 @@ outside the audited code. The tests behind each treatment are listed at the end 
   the vault, which only the owner can benefit from; tokens donated to a vault belong to the owner, who can
   `withdraw` any token, and donated XLM rides along with the next swap's payout.
 
-### Test evidence
-
-The tests are in `contracts/vault/src/test.rs` and `contracts/vault-factory/src/test.rs`. Treatments that
-are risk acceptances, operational controls or structural facts have no row.
-
-| Treatment | Tests |
-|---|---|
-| Spoof.1.R.1 | `vault_address_matches_the_javascript_test_vector` |
-| Spoof.2.R.1 | `swap_is_relayer_only_and_reaches_the_vault_through_the_factory`<br>`swap_requires_the_relayer_signature` |
-| Spoof.3.R.1 | `calls_with_another_owner_or_another_factory_are_rejected_before_anything_else`<br>`swap_rejects_every_caller_but_the_factory` |
-| Spoof.4.R.1 | `withdraw_accepts_a_real_signature_from_a_g_owner_and_rejects_another_key`<br>`withdraw_for_a_muxed_owner_accepts_the_base_accounts_real_signature`<br>`withdraw_by_a_custom_account_owner_runs_its_check_auth`<br>`withdraw_by_a_contract_owner_that_invokes_directly_needs_no_authorization_entry`<br>`withdraw_requires_the_owner_signature` |
-| Spoof.5.R.1 | `deploy_is_deterministic_idempotent_and_initialises_the_vault`<br>`vault_address_and_deploy_accept_g_m_and_c_owners` |
-| Tamper.2.R.1 | `swap_rejects_a_config_whose_discount_exceeds_its_cap`<br>`swap_rejects_an_unusable_config`<br>`swap_accepts_a_discount_and_a_price_age_exactly_at_their_caps` |
-| Tamper.2.R.2 | `calls_with_another_owner_or_another_factory_are_rejected_before_anything_else` |
-| Tamper.3.R.1 | `set_discount_is_admin_only_bounded_by_the_cap_and_used_by_the_next_swap`<br>`constructor_rejects_a_discount_above_the_cap` |
-| Tamper.4.R.1 | `swap_creates_the_owner_account_and_pays_the_oracle_floor`<br>`swap_pays_min_out_when_it_is_above_the_floor`<br>`swap_of_a_partial_amount_leaves_the_rest_in_the_vault`<br>`swap_rejects_a_zero_or_negative_amount`<br>`swap_rejects_an_amount_above_the_balance` |
-| Tamper.5.R.1 | `swap_rejects_a_missing_or_non_positive_oracle_price`<br>`swap_rejects_a_stale_oracle_price`<br>`swap_rejects_an_oracle_price_from_the_future`<br>`swap_accepts_an_oracle_record_exactly_at_the_age_limit`<br>`swap_fails_closed_when_the_floor_computation_overflows` |
-| Repudiate.1.R.1 | `swap_creates_the_owner_account_and_pays_the_oracle_floor`<br>`swap_forwards_an_overpayment_and_any_prior_xlm_to_the_owner`<br>`withdraw_returns_all_usdc_to_the_owner` |
-| Repudiate.2.R.1 | `deploy_is_deterministic_idempotent_and_initialises_the_vault`<br>`set_relayer_and_set_admin_are_admin_only`<br>`set_discount_is_admin_only_bounded_by_the_cap_and_used_by_the_next_swap` |
-| DoS.1.R.1 | `withdraw_returns_all_usdc_to_the_owner`<br>`withdraw_does_not_need_the_relayer_and_swap_does_not_need_the_owner` |
-| DoS.2.R.1 | `swap_rejects_a_missing_or_non_positive_oracle_price`<br>`swap_rejects_a_stale_oracle_price` |
-| DoS.3.R.1 | `swap_reverts_when_the_filler_has_no_fill_function`<br>`swap_reverts_when_the_filler_pays_short_or_nothing` |
-| DoS.4.R.1 | `withdraw_fails_cleanly_without_a_trustline_or_account`<br>`withdraw_rejects_an_empty_vault`<br>`swap_creates_the_owner_account_and_pays_the_oracle_floor`<br>`swap_delivers_to_an_existing_account`<br>`withdraw_to_a_contract_owner_needs_no_trustline`<br>`swap_delivers_to_a_contract_owner` |
-| DoS.5.R.1 | `swap_rejects_a_delivery_below_the_minimum`<br>`swap_cannot_create_an_account_below_the_network_minimum` |
-| DoS.8.R.1 | `deploy_rejects_a_malformed_owner`<br>`swap_delivers_to_the_base_account_of_a_muxed_owner` |
-| DoS.9.R.1 | `constructor_rejects_a_discount_above_the_cap`<br>`constructor_rejects_a_price_age_above_the_cap`<br>`constructor_rejects_a_zero_price_age`<br>`constructor_rejects_a_zero_min_delivery`<br>`constructor_rejects_usdc_equal_to_xlm`<br>`constructor_rejects_the_usdc_contract_as_the_oracle`<br>`constructor_rejects_the_xlm_contract_as_the_oracle` |
-| Elevation.1.R.1 | the tests of Spoof.2.R.1, Tamper.4.R.1 and Tamper.5.R.1 |
-| Elevation.2.R.1 | `set_relayer_and_set_admin_are_admin_only` |
-| Elevation.3.R.1 | `swap_reverts_when_the_filler_pays_short_or_nothing`<br>`swap_reverts_when_the_filler_has_no_fill_function` |
-| Elevation.3.R.2 | `swap_reverts_when_the_filler_pulls_more_usdc_in_the_vaults_name` |
-| Elevation.3.R.3 | `swap_reverts_when_the_filler_re_enters_the_vault` |
-| Elevation.3.R.4 | `swap_forwards_an_overpayment_and_any_prior_xlm_to_the_owner` |
-| Elevation.3.R.5 | `swap_through_the_aquarius_filler_under_real_authorization_rules` |
-| Elevation.4.R.1 | `withdraw_works_for_any_token_the_vault_holds` |
-
 ---
 
 ## 4. Did we do a good job?
@@ -543,16 +508,16 @@ are risk acceptances, operational controls or structural facts have no row.
   not the USDC itself (Scope, Elevation.1).
 - **Are the treatments adequate?** Every mitigation implemented in the contracts is exercised by the test
   suite: 62 tests across the three crates (38 vault, 18 factory, 6 filler), run by `cargo test --locked`
-  in CI together with `cargo fmt --check` and `cargo clippy --all-targets -D warnings`; the table at the
-  end of §3 maps treatments to tests. The vault suite drives `swap` and `withdraw` against a fake filler
-  with six behaviours — pay exactly `want`, pay nothing, pay short, overpay, re-enter the vault, pull extra
-  USDC in the vault's name — and a fake oracle whose records can be absent, non-positive, stale or from the
-  future. Owner authorization is tested under the host's real rules, with no mocking. The factory suite
-  includes an end-to-end swap through the real `AquariusFiller` with every contract-level authorization
-  real (only the relayer's signature is mocked), and the derivation is locked to the verify SDK by a shared
-  test vector. Operational controls are not covered by this suite. An end-to-end run on testnet — EVM
-  deposit, CCTP, mint into an undeployed vault, relayer swap creating the owner's account — passed on the
-  release candidate; the only contract change since is one added event field.
+  in CI together with `cargo fmt --check` and `cargo clippy --all-targets -D warnings`; Appendix B maps
+  treatments to tests. The vault suite drives `swap` and `withdraw` against a fake filler with six
+  behaviours — pay exactly `want`, pay nothing, pay short, overpay, re-enter the vault, pull extra USDC in
+  the vault's name — and a fake oracle whose records can be absent, non-positive, stale or from the future.
+  Owner authorization is tested under the host's real rules, with no mocking. The factory suite includes an
+  end-to-end swap through the real `AquariusFiller` with every contract-level authorization real (only the
+  relayer's signature is mocked), and the derivation is locked to the verify SDK by a shared test vector.
+  Operational controls are not covered by this suite. An end-to-end run on testnet — EVM deposit, CCTP,
+  mint into an undeployed vault, relayer swap creating the owner's account — passed on the release
+  candidate; the only contract change since is one added event field.
 - **Will we revisit?** Yes — this is a living document. It is updated whenever the audited contracts
   change (any modification under `stellar/contracts/vault`, `stellar/contracts/vault-factory` or
   `stellar/packages/interfaces`), when a factory is deployed on a new network, when Reflector or Circle
@@ -587,3 +552,40 @@ are in `DESIGN.md` §7.
   archives 120 days after it was deployed or last restored on mainnet — calling the vault does not extend
   it — and is restored by the next transaction that lists it in its restore footprint, which RPC
   simulation does automatically.
+
+---
+
+## Appendix B — Test evidence
+
+The tests are in `contracts/vault/src/test.rs` and `contracts/vault-factory/src/test.rs`. Treatments that
+are risk acceptances, operational controls or structural facts have no row.
+
+| Treatment | Tests |
+|---|---|
+| Spoof.1.R.1 | `vault_address_matches_the_javascript_test_vector` |
+| Spoof.2.R.1 | `swap_is_relayer_only_and_reaches_the_vault_through_the_factory`<br>`swap_requires_the_relayer_signature` |
+| Spoof.3.R.1 | `calls_with_another_owner_or_another_factory_are_rejected_before_anything_else`<br>`swap_rejects_every_caller_but_the_factory` |
+| Spoof.4.R.1 | `withdraw_accepts_a_real_signature_from_a_g_owner_and_rejects_another_key`<br>`withdraw_for_a_muxed_owner_accepts_the_base_accounts_real_signature`<br>`withdraw_by_a_custom_account_owner_runs_its_check_auth`<br>`withdraw_by_a_contract_owner_that_invokes_directly_needs_no_authorization_entry`<br>`withdraw_requires_the_owner_signature` |
+| Spoof.5.R.1 | `deploy_is_deterministic_idempotent_and_initialises_the_vault`<br>`vault_address_and_deploy_accept_g_m_and_c_owners` |
+| Tamper.2.R.1 | `swap_rejects_a_config_whose_discount_exceeds_its_cap`<br>`swap_rejects_an_unusable_config`<br>`swap_accepts_a_discount_and_a_price_age_exactly_at_their_caps` |
+| Tamper.2.R.2 | `calls_with_another_owner_or_another_factory_are_rejected_before_anything_else` |
+| Tamper.3.R.1 | `set_discount_is_admin_only_bounded_by_the_cap_and_used_by_the_next_swap`<br>`constructor_rejects_a_discount_above_the_cap` |
+| Tamper.4.R.1 | `swap_creates_the_owner_account_and_pays_the_oracle_floor`<br>`swap_pays_min_out_when_it_is_above_the_floor`<br>`swap_of_a_partial_amount_leaves_the_rest_in_the_vault`<br>`swap_rejects_a_zero_or_negative_amount`<br>`swap_rejects_an_amount_above_the_balance` |
+| Tamper.5.R.1 | `swap_rejects_a_missing_or_non_positive_oracle_price`<br>`swap_rejects_a_stale_oracle_price`<br>`swap_rejects_an_oracle_price_from_the_future`<br>`swap_accepts_an_oracle_record_exactly_at_the_age_limit`<br>`swap_fails_closed_when_the_floor_computation_overflows` |
+| Repudiate.1.R.1 | `swap_creates_the_owner_account_and_pays_the_oracle_floor`<br>`swap_forwards_an_overpayment_and_any_prior_xlm_to_the_owner`<br>`withdraw_returns_all_usdc_to_the_owner` |
+| Repudiate.2.R.1 | `deploy_is_deterministic_idempotent_and_initialises_the_vault`<br>`set_relayer_and_set_admin_are_admin_only`<br>`set_discount_is_admin_only_bounded_by_the_cap_and_used_by_the_next_swap` |
+| DoS.1.R.1 | `withdraw_returns_all_usdc_to_the_owner`<br>`withdraw_does_not_need_the_relayer_and_swap_does_not_need_the_owner` |
+| DoS.2.R.1 | `swap_rejects_a_missing_or_non_positive_oracle_price`<br>`swap_rejects_a_stale_oracle_price` |
+| DoS.3.R.1 | `swap_reverts_when_the_filler_has_no_fill_function`<br>`swap_reverts_when_the_filler_pays_short_or_nothing` |
+| DoS.4.R.1 | `withdraw_fails_cleanly_without_a_trustline_or_account`<br>`withdraw_rejects_an_empty_vault`<br>`swap_creates_the_owner_account_and_pays_the_oracle_floor`<br>`swap_delivers_to_an_existing_account`<br>`withdraw_to_a_contract_owner_needs_no_trustline`<br>`swap_delivers_to_a_contract_owner` |
+| DoS.5.R.1 | `swap_rejects_a_delivery_below_the_minimum`<br>`swap_cannot_create_an_account_below_the_network_minimum` |
+| DoS.8.R.1 | `deploy_rejects_a_malformed_owner`<br>`swap_delivers_to_the_base_account_of_a_muxed_owner` |
+| DoS.9.R.1 | `constructor_rejects_a_discount_above_the_cap`<br>`constructor_rejects_a_price_age_above_the_cap`<br>`constructor_rejects_a_zero_price_age`<br>`constructor_rejects_a_zero_min_delivery`<br>`constructor_rejects_usdc_equal_to_xlm`<br>`constructor_rejects_the_usdc_contract_as_the_oracle`<br>`constructor_rejects_the_xlm_contract_as_the_oracle` |
+| Elevation.1.R.1 | the tests of Spoof.2.R.1, Tamper.4.R.1 and Tamper.5.R.1 |
+| Elevation.2.R.1 | `set_relayer_and_set_admin_are_admin_only` |
+| Elevation.3.R.1 | `swap_reverts_when_the_filler_pays_short_or_nothing`<br>`swap_reverts_when_the_filler_has_no_fill_function` |
+| Elevation.3.R.2 | `swap_reverts_when_the_filler_pulls_more_usdc_in_the_vaults_name` |
+| Elevation.3.R.3 | `swap_reverts_when_the_filler_re_enters_the_vault` |
+| Elevation.3.R.4 | `swap_forwards_an_overpayment_and_any_prior_xlm_to_the_owner` |
+| Elevation.3.R.5 | `swap_through_the_aquarius_filler_under_real_authorization_rules` |
+| Elevation.4.R.1 | `withdraw_works_for_any_token_the_vault_holds` |
