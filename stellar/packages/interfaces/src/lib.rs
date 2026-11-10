@@ -89,13 +89,6 @@ pub trait Filler {
     ) -> i128;
 }
 
-/// The factory's relayer registry (read by off-chain tooling and fillers outside a swap; nothing may
-/// call the factory while one of its own calls is on the stack, which the host rejects as re-entry).
-#[contractclient(name = "FactoryClient")]
-pub trait Factory {
-    fn is_relayer(env: Env, addr: Address) -> bool;
-}
-
 /// What the factory needs from a vault. Vaults are stateless to keep the per-user rent down (one vault
 /// per user; every stored byte costs rent for at least 120 days): the factory passes the `owner`, its own
 /// address and its immutable `config` with every call instead of the vault storing them; the vault
