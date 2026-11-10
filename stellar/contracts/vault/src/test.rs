@@ -299,7 +299,7 @@ fn fixture() -> Fx {
         xlm_asset: xlm_asset(),
         usdc_asset: usdc_asset(),
         discount_ppm: 10_000, // 1 %
-        max_price_age: 360,
+        max_price_age: 420,
         min_delivery: 20_000_000, // 2 XLM
     };
     Fx {
@@ -795,7 +795,7 @@ fn swap_delivers_to_an_existing_account() {
 #[test]
 fn swap_accepts_an_oracle_record_exactly_at_the_age_limit() {
     let fx = fixture();
-    fx.oracle().set_price(&xlm_asset(), &XLM_PRICE, &(NOW - 360));
+    fx.oracle().set_price(&xlm_asset(), &XLM_PRICE, &(NOW - 420));
     let owner = fx.strkey(&fx.new_account());
     let vault_id = fx.vault(&owner);
     fx.fund_usdc(&vault_id, HUNDRED_USDC);
@@ -892,11 +892,11 @@ fn swap_rejects_a_stale_oracle_price() {
     let filler = fx.filler(FillMode::PayWant);
     let stale = contract_err(VaultError::OracleStale as u32);
 
-    fx.oracle().set_price(&xlm_asset(), &XLM_PRICE, &(NOW - 361));
+    fx.oracle().set_price(&xlm_asset(), &XLM_PRICE, &(NOW - 421));
     assert_eq!(fx.try_swap(&vault_id, &owner, &filler, HUNDRED_USDC, 0), stale);
 
     fx.oracle().set_price(&xlm_asset(), &XLM_PRICE, &NOW);
-    fx.oracle().set_price(&usdc_asset(), &USDC_PRICE, &(NOW - 361));
+    fx.oracle().set_price(&usdc_asset(), &USDC_PRICE, &(NOW - 421));
     assert_eq!(fx.try_swap(&vault_id, &owner, &filler, HUNDRED_USDC, 0), stale);
     fx.assert_untouched(&vault_id, &owner_addr, &filler);
 }

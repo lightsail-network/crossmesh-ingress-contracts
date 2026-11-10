@@ -251,7 +251,7 @@ and with it every vault address: freeze both before tagging.
 | `oracle` | Reflector CEX Pulse feed: mainnet `CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN`, testnet `CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63` |
 | `xlm_asset`, `usdc_asset` | `Other("XLM")`, `Other("USDC")` |
 | `discount_ppm` | ≈ 10_000 (1 %); the code accepts at most 100_000 (10 %) |
-| `max_price_age` | 360 s: the Reflector feed publishes every 5 minutes, so this allows one update plus a minute of slack; the code accepts at most 900 s |
+| `max_price_age` | 420 s: the Reflector feed stamps a record every 5 minutes and publishes it about 45 s later (measured on mainnet, November 2026), so the newest record is up to about 345 s old; 420 s leaves over a minute for a late update before swaps fail with `OracleStale`. The code accepts at most 900 s |
 | `min_delivery` | 20_000_000 (2 XLM: reserve, one trustline and fees) |
 | Aquarius router (filler constructor) | mainnet `CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK`, testnet `CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD` |
 
