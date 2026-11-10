@@ -259,7 +259,7 @@ STRIDE applied per flow. IDs below are referenced by the remediations in §3.
 | DoS.5 | A remainder below `min_delivery` — a tiny deposit or the tail of a partial batch — cannot be swapped on its own (flow 5) |
 | DoS.6 | Rent: a vault instance, the factory, or a code entry is archived (flow 9) |
 | DoS.7 | Circle pauses its forwarder, or freezes or claws back the vault's USDC (flow 3) |
-| DoS.8 | A malformed or unusable owner is committed: a strkey the factory rejects, a C owner that cannot authorize, or one that cannot use XLM (flows 1, 5c, 7) |
+| DoS.8 | A malformed or unusable owner is committed: a strkey the factory rejects, a C owner that cannot authorize or cannot use XLM, or a custodial address that credits deposits only by memo (flows 1, 5c, 7) |
 | DoS.9 | A wrong value in the immutable `VaultConfig` — an impostor asset contract, a wrong oracle asset id — is latched at construction (flow 8, Appendix A) |
 | DoS.10 | USDC is mis-sent to the factory or to a filler, which have no exit for it (flows 3, 6) |
 | DoS.11 | A relayer serves every owner but this one — selective censorship of one vault (flow 4) |
@@ -462,7 +462,12 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   owner's decision. A C owner whose code can neither invoke `withdraw` nor implement `__check_auth` cannot
   recover its USDC itself — the relayer can convert it to XLM but cannot make the contract release
   anything — and a C owner that cannot use XLM (a token or pool contract) loses the XLM; address issuers
-  must not accept such owners (`DESIGN.md` §6).
+  must not accept such owners (`DESIGN.md` §6). The same goes for a custodial G address that tells its
+  customers apart by memo, such as an exchange deposit address: the payout is a contract transfer, the
+  contracts give the owner no way to attach a memo, and the custodian receives XLM it cannot attribute.
+  Such a user is issued the custodian's M address instead — the token contract reports its id with the
+  transfer (`swap_delivers_to_the_base_account_of_a_muxed_owner`) — and only where the custodian credits
+  contract payments to M addresses.
 - **DoS.9.R.1** — The constructor rejects the mis-wirings it can detect — a discount above the cap, a
   `max_price_age` of zero or above the cap, a non-positive `min_delivery`, `usdc == xlm`, `oracle == usdc`,
   `oracle == xlm` — but cannot tell a canonical asset contract or feed from a plausible impostor
@@ -617,7 +622,8 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
 - **Issuing addresses per network:** never hand out a deposit address committed to a vault before the
   factory on that network has been verified against the published parameters (DoS.9), and derive vaults
   only from that factory and that network's passphrase — the same owner has different vaults on mainnet
-  and testnet. Address issuers must refuse C owners that cannot authorize or cannot use XLM (DoS.8).
+  and testnet. Address issuers must refuse C owners that cannot authorize or cannot use XLM, and custodial
+  G addresses that need a memo — the custodian's M address is the form to use (DoS.8).
 - **Rent:** the operator keeps the factory instance, the launch filler and the three code entries alive
   with `ExtendFootprintTTL` operations; no contract extends TTLs itself (DoS.6). A vault's instance
   archives 120 days after it was deployed or last restored on mainnet — calling the vault does not extend
