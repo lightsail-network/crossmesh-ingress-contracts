@@ -30,7 +30,7 @@
 - **Out of scope, modeled as adversarial or as a trusted dependency:** the Cross Mesh backend and relayer
   software and the custody of the admin and relayer keys (adversarial); the Aquarius router and pools
   behind the launch filler (adversarial, reached only through a filler); Reflector's price feed (**the one
-  trusted dependency the design accepts**, Tamper.6); Circle's `CctpForwarder` and its issuer powers over
+  trusted dependency the design accepts**, Tamper.5); Circle's `CctpForwarder` and its issuer powers over
   USDC, and the Stellar protocol itself including the native-XLM and USDC Stellar Asset Contracts
   (trusted platform). The EVM contracts that get the USDC here are covered by their own model.
 - **What this model demonstrates.** With the relayer, the admin and the filler all adversarial, the four
@@ -203,7 +203,7 @@ Numbered flows (threats in §2 reference these):
 | TB3 | Relayer ↔ `VaultFactory.swap` (flow 4) | Semi-trusted: may _time_ settlements, split them into partial amounts, and pick the filler (the USDC's buyer) and `min_out`; bounded by the oracle floor; cannot redirect the XLM payout or avoid the floor |
 | TB4 | Admin ↔ factory setters (flow 8) | Semi-trusted: bounded by code-fixed caps; cannot touch the config beyond `discount_ppm`, nor any vault |
 | TB5 | Vault ↔ filler (flows 5b, 6) | **Adversarial.** Arbitrary code receives the USDC; the vault's guarantees do not depend on it (Elevation.3) |
-| TB6 | Vault ↔ Reflector (flow 5a) | **Trusted dependency — the single trust point.** Bounded by freshness and positivity checks and by the relayer's `min_out`; a wrong-but-fresh price is the accepted residual (Tamper.6) |
+| TB6 | Vault ↔ Reflector (flow 5a) | **Trusted dependency — the single trust point.** Bounded by freshness and positivity checks and by the relayer's `min_out`; a wrong-but-fresh price is the accepted residual (Tamper.5) |
 | TB7 | Contracts ↔ Stellar protocol and SACs (flows 3, 5c, 7) | Trusted platform: Circle's issuer powers over USDC apply to every holder; CAP-0073 account creation; host re-entry prohibition; rent |
 | TB8 | EVM contracts ↔ this system (flows 2–3) | Covered by `docs/THREAT-MODEL.md`; this model assumes only that USDC can arrive at a vault address |
 
@@ -230,10 +230,8 @@ STRIDE applied per flow. IDs below are referenced by the remediations in §3.
 | Tamper.1 | Change a vault's owner or code after its address was issued (flows 1, 5, 7) |
 | Tamper.2 | Feed `Vault.swap` a forged `VaultConfig` — another oracle, other asset contracts, a discount above the cap — or deploy a look-alike vault from a hostile factory (flow 5) |
 | Tamper.3 | The admin raises `discount_ppm` beyond what users verified (flow 8) |
-| Tamper.4 | The relayer pushes the deliverable down with `min_out = 0`, a tiny `amount`, or a hostile route (flows 4–6) |
-| Tamper.5 | The filler reports an inflated output or otherwise corrupts the vault's accounting (flow 6) |
-| Tamper.6 | The oracle record is stale, from the future, zero, negative, or wrong but fresh; or USDC de-pegs (flow 5a) |
-| Tamper.7 | A third party front-runs or sandwiches the relayer's swap on the venue, taking the surplus above `want` or pushing the output below it (flow 6) |
+| Tamper.4 | The relayer pushes the deliverable down with `min_out = 0`, a tiny `amount`, or a hostile route; or a third party front-runs or sandwiches the swap on the venue, taking the surplus above `want` or pushing the output below it (flows 4–6) |
+| Tamper.5 | The oracle record is stale, from the future, zero, negative, or wrong but fresh; or USDC de-pegs (flow 5a) |
 
 ### Repudiation
 
@@ -252,7 +250,7 @@ STRIDE applied per flow. IDs below are referenced by the remediations in §3.
 
 | ID | Threat (flow) |
 |---|---|
-| DoS.1 | The relayer goes offline, or every relayer is disabled, and no swap ever happens (flow 4) |
+| DoS.1 | No swap ever happens: the relayer goes offline, every relayer is disabled, or a relayer serves every owner but this one — selective censorship (flow 4) |
 | DoS.2 | Reflector stalls, drops an asset, or is paused; `swap` cannot compute a floor (flow 5a) |
 | DoS.3 | The filler or its venue is broken, hostile, or exceeds the transaction's resource limits; `swap` fails (flows 5b, 6) |
 | DoS.4 | The owner cannot `withdraw`: a G/M account that does not exist yet or holds no USDC trustline (flow 7) |
@@ -262,18 +260,15 @@ STRIDE applied per flow. IDs below are referenced by the remediations in §3.
 | DoS.8 | A malformed or unusable owner is committed: a strkey the factory rejects, a C owner that cannot authorize or cannot use XLM, or a custodial address that credits deposits only by memo (flows 1, 5c, 7) |
 | DoS.9 | A wrong value in the immutable `VaultConfig` — an impostor asset contract, a wrong oracle asset id — is latched at construction (flow 8, Appendix A) |
 | DoS.10 | USDC is mis-sent to the factory or to a filler, which have no exit for it (flows 3, 6) |
-| DoS.11 | A relayer serves every owner but this one — selective censorship of one vault (flow 4) |
 
 ### Elevation of privilege
 
 | ID | Threat (flow) |
 |---|---|
-| Elevation.1 | A compromised relayer key abuses `swap` (flow 4) |
-| Elevation.2 | A compromised admin key abuses `set_relayer`, `set_discount`, `set_admin` (flow 8) |
-| Elevation.3 | **A hostile filler** keeps the USDC, pays short, re-enters the vault, borrows the vault's authorization to pull more, or redirects the XLM (flows 5b, 6) |
+| Elevation.1 | A compromised relayer key abuses `swap`, including by settling a vault ahead of the owner's pending `withdraw` — forced conversion (flows 4, 7) |
+| Elevation.2 | A compromised admin key abuses `set_relayer`, `set_discount`, `set_admin`, alone or together with a relayer — the combined worst case (flows 4, 8) |
+| Elevation.3 | **A hostile filler** keeps the USDC, pays short, reports an inflated output, re-enters the vault, borrows the vault's authorization to pull more, or redirects the XLM (flows 5b, 6) |
 | Elevation.4 | A third party gains something over a vault through the permissionless `deploy` or `mint_and_forward`, or by donating tokens to it (flows 3, 9) |
-| Elevation.5 | Relayer and admin collude (the combined worst case) (flows 4, 8) |
-| Elevation.6 | The relayer settles a vault ahead of the owner's pending `withdraw`, converting USDC the owner wanted back — forced conversion (flows 4, 7) |
 
 ---
 
@@ -362,11 +357,13 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   `swap_creates_the_owner_account_and_pays_the_oracle_floor`, `swap_pays_min_out_when_it_is_above_the_floor`,
   `swap_of_a_partial_amount_leaves_the_rest_in_the_vault`, `swap_rejects_a_zero_or_negative_amount` and
   `swap_rejects_an_amount_above_the_balance`.
-- **Tamper.5.R.1** — The filler's return value is discarded. The vault records its XLM balance before the
-  transfer to the filler and compares after `fill` returns; only that delta counts (`FillShortfall`
-  otherwise). Balances live in the native SAC, which no filler can falsify. The `Swapped` event reports
-  the measured delta as `amount_out`. See Elevation.3.
-- **Tamper.6.R.1** — Both records are validated: present, `price > 0`, `timestamp ≤ now + 60 s` (a record
+- **Tamper.4.R.2** — A third party on the venue is held to the same floor: an attack that pushes the
+  output below `want` only makes the swap revert for a retry, and one that takes the surplus above `want`
+  takes what Elevation.1 already concedes to the relayer. Stellar applies a ledger's transactions in a
+  pseudo-random order, so same-ledger sandwiching is not reliably available; cross-ledger front-running
+  of a visible route remains. _Risk accepted (residual):_ the relayer limits the surplus by setting
+  `min_out` from a live quote and swapping promptly after it.
+- **Tamper.5.R.1** — Both records are validated: present, `price > 0`, `timestamp ≤ now + 60 s` (a record
   from the future is a broken feed, not a fresh price) and `now − timestamp ≤ max_price_age`, with
   `max_price_age` configured at 420 s against a 5-minute feed and capped at 900 s in code. The floor uses
   checked arithmetic and fails closed on overflow (`Overflow`). Reading the USDC price too, from the same
@@ -374,19 +371,12 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   `swap_rejects_a_missing_or_non_positive_oracle_price`, `swap_rejects_a_stale_oracle_price`,
   `swap_rejects_an_oracle_price_from_the_future`, `swap_accepts_an_oracle_record_exactly_at_the_age_limit`
   and `swap_fails_closed_when_the_floor_computation_overflows`.
-- **Tamper.6.R.2** — _Risk accepted (the design's single trust point):_ a **wrong but updating** price
+- **Tamper.5.R.2** — _Risk accepted (the design's single trust point):_ a **wrong but updating** price
   passes every check, and then the relayer's `min_out` — set from a live quote by Cross Mesh's own
   software — is the only protection. The feed is Reflector's CEX-aggregate feed rather than its
   Stellar-DEX feed, because the latter prices the exact pair but can be moved for a 5-minute window with
   far less capital. The oracle address and asset identifiers are immutable in the factory config, so users
   verify them once, as they verify fee caps on the EVM side.
-
-- **Tamper.7.R.1** — The floor bounds the owner's outcome whatever happens on the venue: an attack that
-  pushes the output below `want` only makes the swap revert for a retry, and one that takes the surplus
-  above `want` takes what Elevation.1 already concedes to the relayer. Stellar applies a ledger's
-  transactions in a pseudo-random order, so same-ledger sandwiching is not reliably available;
-  cross-ledger front-running of a visible route remains. _Risk accepted (residual):_ the relayer limits
-  the surplus by setting `min_out` from a live quote and swapping promptly after it.
 
 ### Repudiation
 
@@ -410,7 +400,9 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   owner may `withdraw` the USDC with their own signature at any time before a relayer settles the vault;
   `withdraw` does not involve the relayer set, the oracle, or a filler. Operator absence delays conversion,
   never strands funds. Once a swap has settled, the USDC is gone and the owner holds XLM at no less than
-  the floor — the product's promise, not a loss (Elevation.6). Covered by
+  the floor — the product's promise, not a loss (Elevation.1.R.2). The same holds for an owner whom a
+  relayer singles out and never serves: that owner needs no relayer either, the admin can enable more
+  relayers, and an ignored vault loses nothing — the USDC stays and nothing accrues against it. Covered by
   `withdraw_returns_all_usdc_to_the_owner` and `withdraw_does_not_need_the_relayer_and_swap_does_not_need_the_owner`.
 - **DoS.1.R.2** — _Risk accepted (residual):_ a user whose account does not exist yet cannot sign a
   `withdraw` until someone funds the account with a couple of XLM — the position every new user is in with
@@ -484,11 +476,6 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   ever committed as recipients, so no protocol flow can mis-route there; the mis-sender has no on-chain
   claim.
 
-- **DoS.11.R.1** — The same hatch as DoS.1.R.1: a censored owner needs no relayer — anyone deploys the
-  vault, the owner withdraws — and the admin can enable more relayers; the residual is the fresh-account
-  case of DoS.1.R.2. A relayer cannot harm a vault by ignoring it: the USDC stays, and nothing accrues
-  against it.
-
 ### Elevation of privilege
 
 - **Elevation.1.R.1** — Relayer worst case is _bounded, not prevented_: a relayer chooses when to swap, in
@@ -498,17 +485,30 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   by choosing a filler that pays exactly `want` and picking the moment — is the current `discount_ppm`
   plus the XLM/USD move since the oracle's last update, with the record at most `max_price_age` old
   (configured 420 s, capped 900 s). Keys are revocable per address via `set_relayer`.
+- **Elevation.1.R.2** — _Risk accepted (by design):_ a swap may land before an owner's pending `withdraw`.
+  An XLM-delivery address is a request for conversion; `withdraw` is the escape hatch for when conversion
+  does not happen, not a right to keep the USDC. The owner is paid XLM at no less than `want`, as in
+  every swap; the contracts offer no ordering between the two and the vault cannot see a pending
+  `withdraw`. An owner who wants USDC on Stellar should be issued a USDC-delivery address instead.
 - **Elevation.2.R.1** — Admin worst case is bounded by the code-fixed caps: it can enable relayers (which
   grants relayer tier, Elevation.1), raise the discount to 10 %, and hand over the role. It **cannot**
   change the oracle, the asset contracts, the vault code hash, `max_price_age` or `min_delivery`; cannot
   upgrade anything; cannot pause, call or drain a vault; and cannot block `withdraw`. `set_admin` requires
   the new admin's signature as well (`new_admin.require_auth()`), so the role cannot be lost to a typo.
   Covered by `set_relayer_and_set_admin_are_admin_only`.
+- **Elevation.2.R.2** — Together with a relayer the admin reaches the ceiling of the design and no
+  further: the discount part rises to the 10 % cap, the oracle-lag part is unchanged, and the owner's
+  value stays above the floor — the cap, the oracle and the vault code are constants of the released
+  wasm and the immutable config, and `withdraw` needs neither key. _Risk accepted:_ within that ceiling
+  the conversion rate is at Cross Mesh's discretion; users verify the cap, the oracle and the vault code
+  hash in the immutable factory config, as they verify fee caps in the EVM `Config` today.
 - **Elevation.3.R.1 — the vault holds against an arbitrary filler.** The vault's only acceptance
   criterion is its own XLM balance: `after − before ≥ want`, else `FillShortfall`, and because Soroban
   invocations are atomic, the revert takes the USDC transfer to the filler with it. A filler that keeps the
   USDC, pays nothing, pays short, or does not implement `fill` at all ends the transaction with every
-  balance unchanged. Covered by `swap_reverts_when_the_filler_pays_short_or_nothing` and
+  balance unchanged. Nor can it falsify the measurement: its return value is discarded, balances live in
+  the native asset contract, and `Swapped` reports the measured delta as `amount_out`. Covered by
+  `swap_reverts_when_the_filler_pays_short_or_nothing` and
   `swap_reverts_when_the_filler_has_no_fill_function` (which assert that vault, owner and filler are
   untouched afterwards).
 - **Elevation.3.R.2** — The filler is granted exactly one thing: `amount` USDC, by a transfer the vault
@@ -540,16 +540,6 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   the vault, which only the owner can benefit from; tokens donated to a vault belong to the owner, who can
   `withdraw` any token (`withdraw_works_for_any_token_the_vault_holds`), and donated XLM rides along with
   the next swap's payout.
-- **Elevation.5.R.1** — Relayer and admin together reach the ceiling of the design and no further: the
-  discount part rises to the 10 % cap, the oracle-lag part is unchanged, and the owner's value stays above the floor — the cap, the oracle and the vault code are constants of the released wasm and the immutable
-  config, and `withdraw` needs neither key. _Risk accepted:_ within that ceiling the conversion rate is
-  at Cross Mesh's discretion; users verify the cap, the oracle and the vault code hash in the immutable
-  factory config, as they verify fee caps in the EVM `Config` today.
-- **Elevation.6.R.1** — _Risk accepted (by design):_ an XLM-delivery address is a request for conversion;
-  `withdraw` is the escape hatch for when conversion does not happen, not a right to keep the USDC. A swap
-  that lands before a `withdraw` pays the owner XLM at no less than `want`, bounded like every swap
-  (Elevation.1); the contracts offer no ordering between the two and the vault cannot see a pending
-  `withdraw`. An owner who wants USDC on Stellar should be issued a USDC-delivery address instead.
 
 ---
 
@@ -569,7 +559,7 @@ outside the audited code. Test names refer to `contracts/vault/src/test.rs` (vau
   this document added `discount_ppm` to the `Swapped` event, so the floor can be recomputed from the event
   alone (Repudiate.1), replaced mocked-authorization evidence for `withdraw` with tests under the host's
   real rules (Spoof.4), and made explicit that what the design protects is the owner's value at the floor,
-  not the USDC itself (Scope, Elevation.6).
+  not the USDC itself (Scope, Elevation.1).
 - **Are the treatments adequate?** Every mitigation implemented in the contracts is exercised by the test
   suite: 62 tests across the three crates (38 vault, 18 factory, 6 filler), run by `cargo test --locked`
   in CI together with `cargo fmt --check` and `cargo clippy --all-targets -D warnings`. The vault suite
